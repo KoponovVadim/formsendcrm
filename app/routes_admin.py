@@ -11,7 +11,7 @@ import re
 
 from app.database import get_db
 from app.models import User, Role, ModuleConfig, SyncLog, DynamicRecord
-from app.auth import get_current_user, require_superuser, hash_password
+from app.auth import get_current_user, require_superuser, hash_password, get_user_specializations
 from app.schema_loader import get_all_modules
 from app import sync_service
 
@@ -50,6 +50,19 @@ def _detect_status_field_name(fields_schema: list) -> str:
     for name in field_names:
         lowered = name.strip().lower()
         if "статус" in lowered and "оплат" not in lowered:
+            return name
+    return ""
+
+
+def _detect_specialization_field_name(fields_schema: list) -> str:
+    field_names = [f.get("name", "") for f in fields_schema if isinstance(f, dict)]
+    exact_candidates = {"устройство", "тип устройства", "категория", "специализация", "device", "category"}
+    for name in field_names:
+        if name.strip().lower() in exact_candidates:
+            return name
+    for name in field_names:
+        lowered = name.strip().lower()
+        if "устрой" in lowered or "категор" in lowered or "специал" in lowered:
             return name
     return ""
 
@@ -96,12 +109,43 @@ def _build_module_status_editor_state(mod: ModuleConfig) -> dict:
         if color:
             colors_lines.append(f"{option}={color}")
 
+    specialization_field_candidates = [
+        f.get("name", "")
+        for f in fields_schema
+        if isinstance(f, dict)
+    ]
+    detected_specialization_field = _detect_specialization_field_name(fields_schema)
+    specialization_field_obj = None
+    for field in fields_schema:
+        if isinstance(field, dict) and field.get("name") == detected_specialization_field:
+            specialization_field_obj = field
+            break
+
+    specialization_options = specialization_field_obj.get("specialization_options") if specialization_field_obj else []
+    specialization_options = [str(v).strip() for v in (specialization_options or []) if str(v).strip()]
+
     return {
         "status_field_candidates": status_field_candidates,
         "selected_status_field": detected_field,
         "status_options_text": "\n".join(options),
         "status_colors_text": "\n".join(colors_lines),
+        "specialization_field_candidates": specialization_field_candidates,
+        "selected_specialization_field": detected_specialization_field,
+        "specialization_options_text": "\n".join(specialization_options),
     }
+
+
+def _get_partner_specialization_catalog(modules: list[ModuleConfig]) -> list[str]:
+    for mod in modules:
+        for field in (mod.fields_schema or []):
+            if not isinstance(field, dict):
+                continue
+            options = field.get("specialization_options")
+            if isinstance(options, list) and options:
+                cleaned = [str(v).strip() for v in options if str(v).strip()]
+                if cleaned:
+                    return cleaned
+    return []
 
 
 def _require_admin(user):
@@ -251,9 +295,14 @@ async def users_list(
     users = (await db.execute(select(User).order_by(User.id))).scalars().all()
     roles = (await db.execute(select(Role).order_by(Role.id))).scalars().all()
     modules = await get_all_modules(db)
+    all_modules = (await db.execute(select(ModuleConfig).order_by(ModuleConfig.sort_order))).scalars().all()
+    specialization_catalog = _get_partner_specialization_catalog(all_modules)
+    user_specializations_map = {u.id: get_user_specializations(u) for u in users}
     return templates.TemplateResponse("admin/users.html", {
         "request": request, "user": user, "users": users,
         "roles": roles, "modules": modules,
+        "specialization_catalog": specialization_catalog,
+        "user_specializations_map": user_specializations_map,
     })
 
 
@@ -271,7 +320,10 @@ async def user_update(
     form = await request.form()
     role_id = form.get("role_id")
     target.role_id = int(role_id) if role_id else None
-    if "specialization" in form:
+    if "specializations" in form:
+        selected = [v.strip() for v in form.getlist("specializations") if v and v.strip()]
+        target.specialization = ", ".join(selected)
+    elif "specialization" in form:
         target.specialization = (form.get("specialization") or "").strip()
     target.is_active = form.get("is_active") == "on"
     target.is_superuser = form.get("is_superuser") == "on"
@@ -318,6 +370,8 @@ async def module_status_settings_update(
     status_field: str = Form(""),
     status_options_text: str = Form(""),
     status_colors_text: str = Form(""),
+    specialization_field: str = Form(""),
+    specialization_options_text: str = Form(""),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -334,6 +388,10 @@ async def module_status_settings_update(
         if isinstance(f, dict)
     }
     if status_field not in valid_field_names:
+        return RedirectResponse("/admin/modules", status_code=302)
+
+    specialization_field = (specialization_field or "").strip()
+    if specialization_field and specialization_field not in valid_field_names:
         return RedirectResponse("/admin/modules", status_code=302)
 
     parsed_options = []
@@ -364,6 +422,14 @@ async def module_status_settings_update(
         )
         parsed_colors[canonical_name] = normalized
 
+    parsed_specializations = []
+    for line in (specialization_options_text or "").splitlines():
+        value = line.strip()
+        if not value:
+            continue
+        if value not in parsed_specializations:
+            parsed_specializations.append(value)
+
     updated_fields = []
     for field in fields_schema:
         if not isinstance(field, dict):
@@ -377,6 +443,11 @@ async def module_status_settings_update(
         else:
             field_copy.pop("status_options", None)
             field_copy.pop("status_colors", None)
+
+        if specialization_field and field_copy.get("name") == specialization_field:
+            field_copy["specialization_options"] = parsed_specializations
+        else:
+            field_copy.pop("specialization_options", None)
         updated_fields.append(field_copy)
 
     mod.fields_schema = updated_fields

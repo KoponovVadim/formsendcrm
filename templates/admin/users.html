@@ -40,11 +40,19 @@
                             </form>
                         </td>
                         <td>
+                            {% set selected_specs = user_specializations_map.get(u.id, []) %}
                             <form method="POST" action="/admin/users/{{ u.id }}/update" class="d-inline">
-                                <input type="text" name="specialization" class="form-control form-control-sm"
-                                       placeholder="Напр: Иван, Петр"
-                                       value="{{ u.specialization or '' }}"
-                                       onchange="this.form.submit()">
+                                <select name="specializations" class="form-select form-select-sm" multiple size="4"
+                                        style="min-width: 220px" onchange="this.form.submit()">
+                                    {% for option in specialization_catalog %}
+                                    <option value="{{ option }}" {% if option in selected_specs %}selected{% endif %}>{{ option }}</option>
+                                    {% endfor %}
+                                    {% for selected in selected_specs %}
+                                    {% if selected not in specialization_catalog %}
+                                    <option value="{{ selected }}" selected>{{ selected }}</option>
+                                    {% endif %}
+                                    {% endfor %}
+                                </select>
                                 <input type="hidden" name="role_id" value="{{ u.role_id or '' }}">
                                 <input type="hidden" name="is_active" value="{% if u.is_active %}on{% endif %}">
                                 <input type="hidden" name="is_superuser" value="{% if u.is_superuser %}on{% endif %}">

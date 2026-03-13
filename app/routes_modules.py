@@ -4,7 +4,7 @@ Dynamic module routes – list, detail, create, update, delete for any module.
 from fastapi import APIRouter, Depends, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select, func, delete as sa_delete, case, or_
+from sqlalchemy import select, func, delete as sa_delete, case, or_, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
 import re
@@ -90,6 +90,18 @@ def _get_partner_field(all_fields: list[str]) -> str | None:
     return None
 
 
+def _get_specialization_field(all_fields: list[str]) -> str | None:
+    exact = {"устройство", "тип устройства", "категория", "специализация", "device", "category"}
+    for field in all_fields:
+        if field.strip().lower() in exact:
+            return field
+    for field in all_fields:
+        lowered = field.strip().lower()
+        if "устрой" in lowered or "категор" in lowered or "специал" in lowered:
+            return field
+    return None
+
+
 def _status_eq(value: str, expected: str) -> bool:
     return _status_key(value) == _status_key(expected)
 
@@ -124,6 +136,28 @@ def _extract_status_settings(module: ModuleConfig) -> tuple[str | None, list[str
     return detected_status_field, options, status_colors
 
 
+def _extract_specialization_settings(module: ModuleConfig) -> tuple[str | None, list[str]]:
+    field_names = [f.get("name", "") for f in (module.fields_schema or []) if isinstance(f, dict)]
+    selected_field = _get_specialization_field(field_names)
+    field_obj = None
+
+    for field in (module.fields_schema or []):
+        if not isinstance(field, dict):
+            continue
+        if field.get("specialization_options"):
+            selected_field = field.get("name")
+            field_obj = field
+            break
+        if field.get("name") == selected_field:
+            field_obj = field
+
+    options = []
+    if field_obj and isinstance(field_obj.get("specialization_options"), list):
+        options = [str(v).strip() for v in field_obj.get("specialization_options", []) if str(v).strip()]
+
+    return selected_field, options
+
+
 def _row_bg_for_status(status_value: str, status_colors: dict[str, str]) -> str:
     key = _status_key(status_value)
     for status_name, color in status_colors.items():
@@ -152,7 +186,7 @@ async def module_list(
 
     all_field_names = [f["name"] for f in module.fields_schema]
     status_field, status_options, status_colors = _extract_status_settings(module)
-    partner_field = _get_partner_field(all_field_names)
+    specialization_field, _ = _extract_specialization_settings(module)
     user_specializations = get_user_specializations(user)
     visible_fields = get_visible_fields(permissions, slug, all_field_names, user.is_superuser)
     editable_fields = get_editable_fields(permissions, slug, all_field_names, user.is_superuser)
@@ -168,11 +202,11 @@ async def module_list(
         stmt = stmt.where(DynamicRecord.data.cast(str).ilike(f"%{search}%"))
 
     # Partner specialization filter: show only own partner orders.
-    if not user.is_superuser and partner_field and user_specializations:
+    if not user.is_superuser and specialization_field and user_specializations:
         lowered_specializations = [s.lower() for s in user_specializations]
-        partner_expr = func.lower(func.coalesce(func.json_extract_path_text(DynamicRecord.data, partner_field), ""))
+        partner_expr = func.lower(func.coalesce(cast(DynamicRecord.data[specialization_field], String), ""))
         stmt = stmt.where(
-            or_(*[partner_expr == spec for spec in lowered_specializations])
+            or_(*[partner_expr.like(f"%{spec}%") for spec in lowered_specializations])
         )
 
     if sort not in SORT_OPTIONS:
@@ -185,7 +219,7 @@ async def module_list(
     total = (await db.execute(count_stmt)).scalar() or 0
 
     partner_issued_priority = case(
-        (func.coalesce(func.json_extract_path_text(DynamicRecord.data, "__partner_issued__"), "false") == "true", 1),
+        (func.lower(func.coalesce(cast(DynamicRecord.data["__partner_issued__"], String), "false")).like("%true%"), 1),
         else_=0,
     ).desc()
 

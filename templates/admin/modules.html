@@ -83,6 +83,30 @@
                                         <small class="text-muted d-block mt-1">Формат: Статус=#RRGGBB.</small>
                                     </div>
                                 </div>
+
+                                <hr class="my-3">
+
+                                <div class="row g-3">
+                                    <div class="col-12 col-lg-4">
+                                        <label class="form-label fw-semibold">Поле специализации</label>
+                                        <select name="specialization_field" class="form-select">
+                                            <option value="">— Не использовать —</option>
+                                            {% for field_name in editor.get('specialization_field_candidates', []) %}
+                                            <option value="{{ field_name }}"
+                                                    {% if field_name == editor.get('selected_specialization_field') %}selected{% endif %}>
+                                                {{ field_name }}
+                                            </option>
+                                            {% endfor %}
+                                        </select>
+                                        <small class="text-muted d-block mt-1">Это поле будет использоваться для фильтрации заказов по специализации партнера.</small>
+                                    </div>
+                                    <div class="col-12 col-lg-8">
+                                        <label class="form-label fw-semibold">Справочник специализаций партнеров</label>
+                                        <textarea name="specialization_options_text" class="form-control" rows="5"
+                                                  placeholder="Холодильники&#10;Стиральные машины&#10;Телевизоры">{{ editor.get('specialization_options_text', '') }}</textarea>
+                                        <small class="text-muted d-block mt-1">Один вариант на строку. Эти значения появятся в мультивыборе у пользователей.</small>
+                                    </div>
+                                </div>
                                 <div class="mt-3 d-flex justify-content-end">
                                     <button type="submit" class="btn btn-primary btn-sm">
                                         <i class="bi bi-save me-1"></i>Сохранить статусы
