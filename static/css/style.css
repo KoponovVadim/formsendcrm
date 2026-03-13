@@ -70,11 +70,11 @@
     background-color: var(--status-row-color, #ffffff);
 }
 
-.table.table-striped > tbody > tr.record-row.status-row--default > td {
+.table > tbody > tr.record-row.status-row--default > td {
     background-color: #ffffff;
 }
 
-.table.table-striped > tbody > tr.record-row.status-row--custom > td {
+.table > tbody > tr.record-row.status-row--custom > td {
     background-color: var(--status-row-color, #ffffff) !important;
 }
 
