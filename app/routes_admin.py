@@ -27,6 +27,15 @@ DEFAULT_STATUS_OPTIONS = [
     "Отменен",
 ]
 
+DEFAULT_STATUS_COLORS = {
+    "Новый": "#d8b4fe",
+    "В работе": "#fde68a",
+    "Ожидание": "#d1d5db",
+    "Готов": "#bbf7d0",
+    "Выдан": "#bfdbfe",
+    "Отменен": "#fecaca",
+}
+
 
 def _status_key(value: str) -> str:
     return (value or "").strip().lower()
@@ -82,7 +91,8 @@ def _build_module_status_editor_state(mod: ModuleConfig) -> dict:
 
     colors_lines = []
     for option in options:
-        color = _normalize_hex_color(str(stored_colors.get(option, "")))
+        fallback_color = DEFAULT_STATUS_COLORS.get(option, "")
+        color = _normalize_hex_color(str(stored_colors.get(option, fallback_color)))
         if color:
             colors_lines.append(f"{option}={color}")
 

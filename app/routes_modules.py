@@ -30,12 +30,12 @@ DEFAULT_STATUS_OPTIONS = [
 ]
 
 DEFAULT_STATUS_COLORS = {
-    "Новый": "#7c83fd",
-    "В работе": "#16a34a",
-    "Ожидание": "#d97706",
-    "Готов": "#0ea5e9",
-    "Выдан": "#6b7280",
-    "Отменен": "#dc2626",
+    "Новый": "#d8b4fe",
+    "В работе": "#fde68a",
+    "Ожидание": "#d1d5db",
+    "Готов": "#bbf7d0",
+    "Выдан": "#bfdbfe",
+    "Отменен": "#fecaca",
 }
 
 SORT_OPTIONS = {"newest", "oldest", "updated_desc", "updated_asc"}
