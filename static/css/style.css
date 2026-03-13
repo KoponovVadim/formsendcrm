@@ -70,8 +70,21 @@
     background-color: var(--status-row-color, #ffffff);
 }
 
+.table.table-striped > tbody > tr.record-row.status-row--default > td {
+    background-color: #ffffff;
+}
+
+.table.table-striped > tbody > tr.record-row.status-row--custom > td {
+    background-color: var(--status-row-color, #ffffff) !important;
+}
+
 .record-row:hover.status-row--custom,
 .record-row:hover.status-row--default {
+    filter: brightness(0.98);
+}
+
+.table.table-hover > tbody > tr.record-row.status-row--custom:hover > td,
+.table.table-hover > tbody > tr.record-row.status-row--default:hover > td {
     filter: brightness(0.98);
 }
 
