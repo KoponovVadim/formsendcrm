@@ -1,0 +1,87 @@
+{% extends "layout.html" %}
+{% block title %}Редактирование роли — {{ role.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="fw-bold mb-0">
+        <i class="bi bi-shield-lock me-2"></i>Роль: {{ role.name }}
+    </h4>
+    <a href="/admin/roles" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-arrow-left me-1"></i>Назад
+    </a>
+</div>
+
+<form method="POST" action="/admin/roles/{{ role.id }}">
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white fw-bold">Основные данные</div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label">Название</label>
+                    <input type="text" class="form-control" name="name" value="{{ role.name }}" required>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Описание</label>
+                    <input type="text" class="form-control" name="description" value="{{ role.description }}">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Permissions per module -->
+    {% for mod in all_modules %}
+    {% set mod_perms = role.permissions.get(mod.slug, {}) if role.permissions else {} %}
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <span>
+                <i class="bi {{ mod.icon }} me-2"></i><strong>{{ mod.display_name }}</strong>
+                <small class="text-muted">({{ mod.slug }})</small>
+            </span>
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox"
+                       name="perm_{{ mod.slug }}_visible" id="vis_{{ mod.slug }}"
+                       {% if mod_perms.get('visible', false) %}checked{% endif %}>
+                <label class="form-check-label" for="vis_{{ mod.slug }}">Видим</label>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <p class="fw-medium mb-2">Видимость полей</p>
+                    {% for field in mod.fields_schema %}
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox"
+                               name="perm_{{ mod.slug }}_fields_visible"
+                               value="{{ field.name }}"
+                               id="fv_{{ mod.slug }}_{{ loop.index }}"
+                               {% if field.name in mod_perms.get('fields_visible', []) %}checked{% endif %}>
+                        <label class="form-check-label" for="fv_{{ mod.slug }}_{{ loop.index }}">
+                            {{ field.name }}
+                        </label>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="col-md-6">
+                    <p class="fw-medium mb-2">Редактирование полей</p>
+                    {% for field in mod.fields_schema %}
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox"
+                               name="perm_{{ mod.slug }}_fields_editable"
+                               value="{{ field.name }}"
+                               id="fe_{{ mod.slug }}_{{ loop.index }}"
+                               {% if field.name in mod_perms.get('fields_editable', []) %}checked{% endif %}>
+                        <label class="form-check-label" for="fe_{{ mod.slug }}_{{ loop.index }}">
+                            {{ field.name }}
+                        </label>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+
+    <button type="submit" class="btn btn-primary btn-lg">
+        <i class="bi bi-check-lg me-1"></i>Сохранить права
+    </button>
+</form>
+{% endblock %}

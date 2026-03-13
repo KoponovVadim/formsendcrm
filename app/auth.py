@@ -1,0 +1,130 @@
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+from app.database import get_db
+from app.models import User, Role
+from app.config import settings
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
+
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def decode_token(token: str) -> Optional[dict]:
+    try:
+        return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except JWTError:
+        return None
+
+
+async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+                            headers={"Location": "/login"})
+    payload = decode_token(token)
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+                            headers={"Location": "/login"})
+    user_id = payload.get("sub")
+    if user_id is None:
+        raise HTTPException(status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+                            headers={"Location": "/login"})
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.role))
+        .where(User.id == int(user_id))
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+                            headers={"Location": "/login"})
+    return user
+
+
+async def get_current_user_optional(request: Request, db: AsyncSession = Depends(get_db)) -> Optional[User]:
+    token = request.cookies.get("access_token")
+    if not token:
+        return None
+    payload = decode_token(token)
+    if payload is None:
+        return None
+    user_id = payload.get("sub")
+    if user_id is None:
+        return None
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.role))
+        .where(User.id == int(user_id))
+    )
+    return result.scalar_one_or_none()
+
+
+def require_superuser(user: User):
+    if not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Superuser access required")
+
+
+def get_user_permissions(user: User) -> dict:
+    """Return permissions dict for user's role, or full access for superuser."""
+    if user.is_superuser:
+        return {}  # empty means full access
+    if user.role and user.role.permissions:
+        return user.role.permissions
+    return {}
+
+
+def check_module_visible(permissions: dict, module_slug: str, is_superuser: bool) -> bool:
+    if is_superuser:
+        return True
+    if not permissions:
+        return False
+    mod_perms = permissions.get(module_slug, {})
+    return mod_perms.get("visible", False)
+
+
+def get_visible_fields(permissions: dict, module_slug: str, all_fields: list, is_superuser: bool) -> list:
+    if is_superuser:
+        return all_fields
+    if not permissions:
+        return []
+    mod_perms = permissions.get(module_slug, {})
+    visible = mod_perms.get("fields_visible", [])
+    return [f for f in all_fields if f in visible]
+
+
+def get_editable_fields(permissions: dict, module_slug: str, all_fields: list, is_superuser: bool) -> list:
+    if is_superuser:
+        return all_fields
+    if not permissions:
+        return []
+    mod_perms = permissions.get(module_slug, {})
+    editable = mod_perms.get("fields_editable", [])
+    return [f for f in all_fields if f in editable]
+
+
+def filter_visible_modules_for_user(modules: list, user: User) -> list:
+    """Return only modules visible for current user according to role permissions."""
+    if user.is_superuser:
+        return modules
+    permissions = get_user_permissions(user)
+    return [m for m in modules if check_module_visible(permissions, m.slug, user.is_superuser)]

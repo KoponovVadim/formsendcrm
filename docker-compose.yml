@@ -1,0 +1,44 @@
+services:
+  app:
+    build: .
+    container_name: crm-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./schema.json:/app/schema.json:ro
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: crm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crm_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-crm_db}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  nginx:
+    image: nginx:stable
+    container_name: crm-nginx
+    restart: unless-stopped
+    ports:
+      - "8089:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+volumes:
+  pgdata:

@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.env
+*.db
+*.sqlite3
+.venv/
+venv/
+node_modules/
+.idea/
+.vscode/
+*.ipynb
+pgdata/
+analyze.ipynb

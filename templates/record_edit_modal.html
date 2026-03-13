@@ -1,0 +1,42 @@
+<div class="modal-header">
+    <h5 class="modal-title">
+        <i class="bi bi-pencil-square me-2"></i>Редактирование записи #{{ record.row_index }}
+    </h5>
+    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+</div>
+<form hx-post="/modules/{{ module.slug }}/record/{{ record.id }}"
+      hx-target="#save-result" hx-swap="innerHTML">
+    <div class="modal-body">
+        <div id="save-result"></div>
+        {% for field in visible_fields %}
+        <div class="mb-3">
+            <label class="form-label fw-medium">{{ field }}</label>
+            {% if field in editable_fields %}
+            {% if status_field and field == status_field %}
+            {% set current_status = record.data.get(field, '') %}
+            <select class="form-select" name="{{ field }}">
+                {% for option in status_options %}
+                <option value="{{ option }}" {% if current_status == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+                {% if current_status and current_status not in status_options %}
+                <option value="{{ current_status }}" selected>{{ current_status }}</option>
+                {% endif %}
+            </select>
+            {% else %}
+            <input type="text" class="form-control" name="{{ field }}"
+                   value="{{ record.data.get(field, '') }}">
+            {% endif %}
+            {% else %}
+            <input type="text" class="form-control-plaintext bg-light px-2 rounded"
+                   value="{{ record.data.get(field, '') }}" readonly>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+        <button type="submit" class="btn btn-primary">
+            <i class="bi bi-check-lg me-1"></i>Сохранить
+        </button>
+    </div>
+</form>

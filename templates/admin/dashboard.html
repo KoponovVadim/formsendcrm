@@ -1,0 +1,107 @@
+{% extends "layout.html" %}
+{% block title %}Админ-панель{% endblock %}
+{% block content %}
+<h4 class="fw-bold mb-4"><i class="bi bi-gear me-2"></i>Панель управления</h4>
+
+<div class="row g-3 mb-4">
+    <div class="col-sm-4">
+        <div class="card border-0 shadow-sm text-center">
+            <div class="card-body">
+                <i class="bi bi-people-fill text-primary fs-2"></i>
+                <h3>{{ user_count }}</h3>
+                <p class="text-muted mb-0">Пользователей</p>
+                <a href="/admin/users" class="stretched-link"></a>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-4">
+        <div class="card border-0 shadow-sm text-center">
+            <div class="card-body">
+                <i class="bi bi-shield-lock text-success fs-2"></i>
+                <h3>{{ role_count }}</h3>
+                <p class="text-muted mb-0">Ролей</p>
+                <a href="/admin/roles" class="stretched-link"></a>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-4">
+        <div class="card border-0 shadow-sm text-center">
+            <div class="card-body">
+                <i class="bi bi-puzzle text-warning fs-2"></i>
+                <h3>{{ module_count }}</h3>
+                <p class="text-muted mb-0">Модулей</p>
+                <a href="/admin/modules" class="stretched-link"></a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Sync controls -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white fw-bold">
+        <i class="bi bi-arrow-repeat me-2"></i>Синхронизация с Google Sheets
+    </div>
+    <div class="card-body">
+        <div class="d-flex gap-2 mb-3">
+            <button class="btn btn-primary"
+                    hx-post="/admin/sync/pull" hx-target="#sync-result" hx-swap="innerHTML">
+                <i class="bi bi-cloud-download me-1"></i>Pull (Google → БД)
+            </button>
+            <button class="btn btn-success"
+                    hx-post="/admin/sync/push" hx-target="#sync-result" hx-swap="innerHTML">
+                <i class="bi bi-cloud-upload me-1"></i>Push (БД → Google)
+            </button>
+        </div>
+        <div id="sync-result"></div>
+    </div>
+</div>
+
+<!-- Recent sync logs -->
+{% if sync_logs %}
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-white fw-bold">
+        <i class="bi bi-clock-history me-2"></i>Последние операции синхронизации
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Модуль</th>
+                        <th>Направление</th>
+                        <th>Статус</th>
+                        <th>Записей</th>
+                        <th>Сообщение</th>
+                        <th>Дата</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in sync_logs %}
+                    <tr>
+                        <td>{{ log.module_slug }}</td>
+                        <td>
+                            {% if log.direction == 'pull' %}
+                            <span class="badge bg-primary">Pull</span>
+                            {% else %}
+                            <span class="badge bg-success">Push</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if log.status == 'success' %}
+                            <span class="badge bg-success">OK</span>
+                            {% else %}
+                            <span class="badge bg-danger">Ошибка</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ log.records_affected }}</td>
+                        <td class="small">{{ log.message | truncate(60) }}</td>
+                        <td class="small text-muted">{{ log.created_at }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

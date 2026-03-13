@@ -1,0 +1,35 @@
+<div class="modal-header">
+    <h5 class="modal-title">
+        <i class="bi bi-plus-circle me-2"></i>Новая запись — {{ module.display_name }}
+    </h5>
+    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+</div>
+<form hx-post="/modules/{{ module.slug }}/record/new"
+      hx-target="body">
+    <div class="modal-body">
+        {% for field in visible_fields %}
+        <div class="mb-3">
+            <label class="form-label fw-medium">{{ field }}</label>
+            {% if field in editable_fields %}
+            {% if status_field and field == status_field %}
+            <select class="form-select" name="{{ field }}">
+                {% for option in status_options %}
+                <option value="{{ option }}" {% if loop.first %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+            {% else %}
+            <input type="text" class="form-control" name="{{ field }}" value="">
+            {% endif %}
+            {% else %}
+            <input type="text" class="form-control bg-light" name="{{ field }}" value="" readonly>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+        <button type="submit" class="btn btn-success">
+            <i class="bi bi-plus-lg me-1"></i>Создать
+        </button>
+    </div>
+</form>
