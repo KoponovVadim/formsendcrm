@@ -170,7 +170,7 @@ async def module_list(
     # Partner specialization filter: show only own partner orders.
     if not user.is_superuser and partner_field and user_specializations:
         lowered_specializations = [s.lower() for s in user_specializations]
-        partner_expr = func.lower(func.coalesce(DynamicRecord.data[partner_field].astext, ""))
+        partner_expr = func.lower(func.coalesce(func.json_extract_path_text(DynamicRecord.data, partner_field), ""))
         stmt = stmt.where(
             or_(*[partner_expr == spec for spec in lowered_specializations])
         )
@@ -185,7 +185,7 @@ async def module_list(
     total = (await db.execute(count_stmt)).scalar() or 0
 
     partner_issued_priority = case(
-        (func.coalesce(DynamicRecord.data["__partner_issued__"].astext, "false") == "true", 1),
+        (func.coalesce(func.json_extract_path_text(DynamicRecord.data, "__partner_issued__"), "false") == "true", 1),
         else_=0,
     ).desc()
 
