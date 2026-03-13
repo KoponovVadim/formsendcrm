@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models import User, Role
 from app.config import settings
+import re
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -128,3 +129,16 @@ def filter_visible_modules_for_user(modules: list, user: User) -> list:
         return modules
     permissions = get_user_permissions(user)
     return [m for m in modules if check_module_visible(permissions, m.slug, user.is_superuser)]
+
+
+def get_user_specializations(user: User) -> list[str]:
+    """Parse partner specialization list from user profile text."""
+    raw = (user.specialization or "").strip()
+    if not raw:
+        return []
+    items = [s.strip() for s in re.split(r"[,;\n]", raw) if s.strip()]
+    unique: list[str] = []
+    for item in items:
+        if item.lower() not in [v.lower() for v in unique]:
+            unique.append(item)
+    return unique

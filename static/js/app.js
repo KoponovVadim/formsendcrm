@@ -53,6 +53,19 @@ document.addEventListener('DOMContentLoaded', function () {
         return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
+    function refreshRecordsContainer(slug) {
+        const container = document.getElementById('records-container');
+        if (!container || !slug) return;
+        const searchInput = document.querySelector("input[name='search']");
+        const sortSelect = document.querySelector("select[name='sort']");
+        const search = encodeURIComponent(searchInput ? searchInput.value : '');
+        const sort = encodeURIComponent(sortSelect ? sortSelect.value : 'newest');
+        htmx.ajax('GET', `/modules/${slug}?search=${search}&sort=${sort}`, {
+            target: '#records-container',
+            swap: 'innerHTML'
+        });
+    }
+
     async function saveInlineStatus(selectEl) {
         const slug = selectEl.dataset.slug;
         const recordId = selectEl.dataset.recordId;
@@ -81,10 +94,40 @@ document.addEventListener('DOMContentLoaded', function () {
             const payload = await response.json();
             selectEl.dataset.previousValue = value;
             applyRowStatusColor(selectEl, payload.row_bg || rowBg);
+            refreshRecordsContainer(slug);
         } catch (err) {
             selectEl.value = previousValue;
             applyRowStatusColor(selectEl, toRgba(getSelectedOptionColor(selectEl), 0.16));
             alert('Не удалось сохранить статус. Обновите страницу и попробуйте снова.');
+        }
+    }
+
+    async function savePartnerIssued(checkboxEl) {
+        const slug = checkboxEl.dataset.slug;
+        const recordId = checkboxEl.dataset.recordId;
+        const field = checkboxEl.dataset.field;
+        const checked = checkboxEl.checked;
+        checkboxEl.disabled = true;
+
+        const formData = new FormData();
+        formData.append('field', field);
+        formData.append('value', checked ? 'true' : 'false');
+
+        try {
+            const response = await fetch(`/modules/${slug}/record/${recordId}/field`, {
+                method: 'POST',
+                body: formData,
+                headers: { 'HX-Request': 'true' }
+            });
+            if (!response.ok) {
+                throw new Error('Save failed');
+            }
+            refreshRecordsContainer(slug);
+        } catch (err) {
+            checkboxEl.checked = !checked;
+            alert('Не удалось обновить отметку выдачи.');
+        } finally {
+            checkboxEl.disabled = false;
         }
     }
 
@@ -116,16 +159,24 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     document.body.addEventListener('click', function (event) {
-        if (event.target.closest('.js-status-select')) {
+        if (event.target.closest('.js-status-select') || event.target.closest('.js-partner-issued-checkbox')) {
             event.stopPropagation();
         }
     }, true);
 
     document.body.addEventListener('change', function (event) {
         const selectEl = event.target.closest('.js-status-select');
-        if (!selectEl) return;
-        event.stopPropagation();
-        saveInlineStatus(selectEl);
+        if (selectEl) {
+            event.stopPropagation();
+            saveInlineStatus(selectEl);
+            return;
+        }
+
+        const checkboxEl = event.target.closest('.js-partner-issued-checkbox');
+        if (checkboxEl) {
+            event.stopPropagation();
+            savePartnerIssued(checkboxEl);
+        }
     });
 
     // Handle HX-Redirect header

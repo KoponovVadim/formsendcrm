@@ -4,7 +4,7 @@ Dynamic module routes – list, detail, create, update, delete for any module.
 from fastapi import APIRouter, Depends, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select, func, delete as sa_delete
+from sqlalchemy import select, func, delete as sa_delete, case, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
 import re
@@ -13,7 +13,7 @@ from app.database import get_db
 from app.models import DynamicRecord, ModuleConfig
 from app.auth import (
     get_current_user, get_user_permissions, check_module_visible,
-    get_visible_fields, get_editable_fields, filter_visible_modules_for_user,
+    get_visible_fields, get_editable_fields, filter_visible_modules_for_user, get_user_specializations,
 )
 from app.schema_loader import get_all_modules, get_module_by_slug
 
@@ -30,11 +30,11 @@ DEFAULT_STATUS_OPTIONS = [
 ]
 
 DEFAULT_STATUS_COLORS = {
-    "Новый": "#d8b4fe",
-    "В работе": "#fde68a",
-    "Ожидание": "#d1d5db",
-    "Готов": "#bbf7d0",
-    "Выдан": "#bfdbfe",
+    "Новый": "#c084fc",
+    "В работе": "#facc15",
+    "Ожидание": "#9ca3af",
+    "Готов": "#4ade80",
+    "Выдан": "#60a5fa",
     "Отменен": "#fecaca",
 }
 
@@ -78,6 +78,22 @@ def _hex_to_rgba(hex_color: str, alpha: float = 0.16) -> str:
     return f"rgba({r}, {g}, {b}, {alpha})"
 
 
+def _get_partner_field(all_fields: list[str]) -> str | None:
+    exact = {"мастер", "партнер", "партнёр", "specialist", "partner"}
+    for field in all_fields:
+        if field.strip().lower() in exact:
+            return field
+    for field in all_fields:
+        lowered = field.strip().lower()
+        if "мастер" in lowered or "партнер" in lowered or "партн" in lowered:
+            return field
+    return None
+
+
+def _status_eq(value: str, expected: str) -> bool:
+    return _status_key(value) == _status_key(expected)
+
+
 def _extract_status_settings(module: ModuleConfig) -> tuple[str | None, list[str], dict[str, str]]:
     all_field_names = [f.get("name", "") for f in (module.fields_schema or []) if isinstance(f, dict)]
     detected_status_field = _get_status_field(all_field_names)
@@ -112,7 +128,7 @@ def _row_bg_for_status(status_value: str, status_colors: dict[str, str]) -> str:
     key = _status_key(status_value)
     for status_name, color in status_colors.items():
         if _status_key(status_name) == key:
-            return _hex_to_rgba(color)
+            return _hex_to_rgba(color, 0.28)
     return ""
 
 
@@ -136,6 +152,8 @@ async def module_list(
 
     all_field_names = [f["name"] for f in module.fields_schema]
     status_field, status_options, status_colors = _extract_status_settings(module)
+    partner_field = _get_partner_field(all_field_names)
+    user_specializations = get_user_specializations(user)
     visible_fields = get_visible_fields(permissions, slug, all_field_names, user.is_superuser)
     editable_fields = get_editable_fields(permissions, slug, all_field_names, user.is_superuser)
 
@@ -149,6 +167,14 @@ async def module_list(
     if search:
         stmt = stmt.where(DynamicRecord.data.cast(str).ilike(f"%{search}%"))
 
+    # Partner specialization filter: show only own partner orders.
+    if not user.is_superuser and partner_field and user_specializations:
+        lowered_specializations = [s.lower() for s in user_specializations]
+        partner_expr = func.lower(func.coalesce(DynamicRecord.data[partner_field].astext, ""))
+        stmt = stmt.where(
+            or_(*[partner_expr == spec for spec in lowered_specializations])
+        )
+
     if sort not in SORT_OPTIONS:
         sort = "newest"
 
@@ -158,15 +184,20 @@ async def module_list(
     )
     total = (await db.execute(count_stmt)).scalar() or 0
 
+    partner_issued_priority = case(
+        (func.coalesce(DynamicRecord.data["__partner_issued__"].astext, "false") == "true", 1),
+        else_=0,
+    ).desc()
+
     # Paginated data
     if sort == "oldest":
-        stmt = stmt.order_by(DynamicRecord.row_index.asc())
+        stmt = stmt.order_by(partner_issued_priority, DynamicRecord.row_index.asc())
     elif sort == "updated_desc":
-        stmt = stmt.order_by(DynamicRecord.updated_at.desc(), DynamicRecord.row_index.desc())
+        stmt = stmt.order_by(partner_issued_priority, DynamicRecord.updated_at.desc(), DynamicRecord.row_index.desc())
     elif sort == "updated_asc":
-        stmt = stmt.order_by(DynamicRecord.updated_at.asc(), DynamicRecord.row_index.asc())
+        stmt = stmt.order_by(partner_issued_priority, DynamicRecord.updated_at.asc(), DynamicRecord.row_index.asc())
     else:
-        stmt = stmt.order_by(DynamicRecord.row_index.desc())
+        stmt = stmt.order_by(partner_issued_priority, DynamicRecord.row_index.desc())
 
     stmt = stmt.offset(offset).limit(per_page)
     records = (await db.execute(stmt)).scalars().all()
@@ -192,6 +223,7 @@ async def module_list(
         "status_options": status_options,
         "status_colors": status_colors,
         "row_bg_for_status": lambda value: _row_bg_for_status(value, status_colors),
+        "partner_issued_field": "__partner_issued__",
     }
 
     # HTMX partial
@@ -260,6 +292,7 @@ async def record_update(
     permissions = get_user_permissions(user)
     all_field_names = [f["name"] for f in module.fields_schema]
     editable_fields = get_editable_fields(permissions, slug, all_field_names, user.is_superuser)
+    status_field, _, _ = _extract_status_settings(module)
 
     result = await db.execute(
         select(DynamicRecord).where(DynamicRecord.id == record_id, DynamicRecord.module_slug == slug)
@@ -273,6 +306,10 @@ async def record_update(
     for field in editable_fields:
         if field in form_data:
             new_data[field] = form_data[field]
+
+    # Once client handoff is confirmed via status, remove temporary partner-issued priority.
+    if status_field and status_field in new_data and _status_eq(str(new_data.get(status_field, "")), "Выдан"):
+        new_data["__partner_issued__"] = False
 
     record.data = new_data
     record.updated_at = datetime.now(timezone.utc)
@@ -314,8 +351,9 @@ async def record_update_single_field(
         raise HTTPException(403, "Поле недоступно для редактирования")
 
     status_field, _, status_colors = _extract_status_settings(module)
-    if status_field and field != status_field:
-        raise HTTPException(400, "Inline-обновление разрешено только для поля статуса")
+    allowed_meta_fields = {"__partner_issued__"}
+    if status_field and field != status_field and field not in allowed_meta_fields:
+        raise HTTPException(400, "Inline-обновление разрешено только для статуса и флага выдачи")
 
     result = await db.execute(
         select(DynamicRecord).where(DynamicRecord.id == record_id, DynamicRecord.module_slug == slug)
@@ -325,7 +363,17 @@ async def record_update_single_field(
         raise HTTPException(404)
 
     new_data = dict(record.data)
-    new_data[field] = value
+    if field == "__partner_issued__":
+        if not status_field:
+            raise HTTPException(400, "Статусное поле не настроено")
+        current_status = str(new_data.get(status_field, ""))
+        if not _status_eq(current_status, "Готов"):
+            raise HTTPException(400, "Флаг выдачи доступен только для статуса 'Готов'")
+        new_data[field] = str(value).strip().lower() in {"1", "true", "on", "yes"}
+    else:
+        new_data[field] = value
+        if status_field and field == status_field and _status_eq(str(value), "Выдан"):
+            new_data["__partner_issued__"] = False
     record.data = new_data
     record.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -339,7 +387,7 @@ async def record_update_single_field(
 
     return JSONResponse({
         "ok": True,
-        "row_bg": _row_bg_for_status(value, status_colors),
+        "row_bg": _row_bg_for_status(str(new_data.get(status_field, "")), status_colors) if status_field else "",
     })
 
 

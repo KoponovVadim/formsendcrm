@@ -28,11 +28,11 @@ DEFAULT_STATUS_OPTIONS = [
 ]
 
 DEFAULT_STATUS_COLORS = {
-    "Новый": "#d8b4fe",
-    "В работе": "#fde68a",
-    "Ожидание": "#d1d5db",
-    "Готов": "#bbf7d0",
-    "Выдан": "#bfdbfe",
+    "Новый": "#c084fc",
+    "В работе": "#facc15",
+    "Ожидание": "#9ca3af",
+    "Готов": "#4ade80",
+    "Выдан": "#60a5fa",
     "Отменен": "#fecaca",
 }
 
@@ -271,6 +271,8 @@ async def user_update(
     form = await request.form()
     role_id = form.get("role_id")
     target.role_id = int(role_id) if role_id else None
+    if "specialization" in form:
+        target.specialization = (form.get("specialization") or "").strip()
     target.is_active = form.get("is_active") == "on"
     target.is_superuser = form.get("is_superuser") == "on"
     await db.commit()
