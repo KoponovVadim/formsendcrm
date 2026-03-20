@@ -7,7 +7,6 @@ from models.crm import Order, OrderItem, Task
 from repositories.crm_repository import CRMRepository
 from services.assignment_service import choose_best_executor
 from services.audit_service import write_audit
-from services.pricing_service import calculate_total_with_breakdown
 
 
 class OrderService:
@@ -26,6 +25,7 @@ class OrderService:
         order = Order(
             order_no=str(payload.get("order_no") or f"ORD-{int(datetime.now(timezone.utc).timestamp())}"),
             client_id=client.id,
+            location_id=int(payload.get("location_id", 0) or 0) or None,
             status=str(payload.get("status", "new")),
             priority=int(payload.get("priority", 0)),
             source_channel=str(payload.get("source_channel", "manual")),
@@ -49,13 +49,16 @@ class OrderService:
             calculator_breakdown = item_payload.get("calculator_breakdown") or []
 
             if item_payload.get("unit_price") is None and service:
-                computed_total, computed_breakdown = calculate_total_with_breakdown(
-                    float(service.base_price or 0),
-                    service.calculator_schema or {},
-                    calculator_payload,
-                )
-                price = Decimal(str(computed_total))
-                calculator_breakdown = computed_breakdown
+                location_id = int(payload.get("location_id", 0) or 0)
+                if location_id > 0:
+                    location_price = await self.repo.get_location_price(location_id=location_id, service_id=int(service.id))
+                    if location_price is not None:
+                        price = Decimal(str(location_price))
+                    else:
+                        price = Decimal(str(float(service.base_price or 0)))
+                else:
+                    price = Decimal(str(float(service.base_price or 0)))
+                calculator_breakdown = []
             else:
                 if item_payload.get("unit_price") is None and not service:
                     raise ValueError("Either unit_price or valid service_id is required for order item")

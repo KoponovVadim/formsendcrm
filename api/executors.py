@@ -17,6 +17,7 @@ async def list_executors(db: AsyncSession = Depends(get_db), user=Depends(get_cu
         {
             "id": ex.id,
             "name": ex.name,
+            "location_id": ex.location_id,
             "is_active": ex.is_active,
             "active_tasks": ex.current_active_tasks,
             "max_active_tasks": ex.max_active_tasks,

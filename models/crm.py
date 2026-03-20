@@ -58,6 +58,31 @@ class Service(Base):
     calculator_schema: Mapped[dict] = mapped_column(JSON, default=dict)
 
     order_items: Mapped[list["OrderItem"]] = relationship(back_populates="service")
+    location_prices: Mapped[list["LocationPrice"]] = relationship(back_populates="service", cascade="all, delete-orphan")
+
+
+class Location(Base):
+    __tablename__ = "locations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(150), unique=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+
+    prices: Mapped[list["LocationPrice"]] = relationship(back_populates="location", cascade="all, delete-orphan")
+    executors: Mapped[list["Executor"]] = relationship(back_populates="location")
+    orders: Mapped[list["Order"]] = relationship(back_populates="location")
+
+
+class LocationPrice(Base):
+    __tablename__ = "location_prices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    location_id: Mapped[int] = mapped_column(ForeignKey("locations.id"), index=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    price: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+
+    location: Mapped[Location] = relationship(back_populates="prices")
+    service: Mapped[Service] = relationship(back_populates="location_prices")
 
 
 class Executor(Base):
@@ -66,12 +91,14 @@ class Executor(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"), nullable=True, index=True)
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255), index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     max_active_tasks: Mapped[int] = mapped_column(Integer, default=10)
     current_active_tasks: Mapped[int] = mapped_column(Integer, default=0, index=True)
 
     department: Mapped[Department | None] = relationship(back_populates="executors")
+    location: Mapped[Location | None] = relationship(back_populates="executors")
     skills: Mapped[list["ExecutorSkill"]] = relationship(back_populates="executor", cascade="all, delete-orphan")
     tasks: Mapped[list["Task"]] = relationship(back_populates="executor")
 
@@ -93,6 +120,7 @@ class Order(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     order_no: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(30), default="new", index=True)
     priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
     source_channel: Mapped[str] = mapped_column(String(60), default="manual", index=True)
@@ -103,6 +131,7 @@ class Order(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), index=True)
 
     client: Mapped[Client] = relationship(back_populates="orders")
+    location: Mapped[Location | None] = relationship(back_populates="orders")
     items: Mapped[list["OrderItem"]] = relationship(back_populates="order", cascade="all, delete-orphan")
     tasks: Mapped[list["Task"]] = relationship(back_populates="order", cascade="all, delete-orphan")
 

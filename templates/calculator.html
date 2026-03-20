@@ -2,18 +2,23 @@
 {% block title %}Калькулятор{% endblock %}
 {% block content %}
 <div class="calc-pos-page">
-    <form id="service-calculator-form" class="calc-pos-form" autocomplete="off">
+    <form id="calculator-pos-form" class="calc-pos-form" autocomplete="off">
+        <input type="hidden" id="calculator-category" name="category" value="">
+        <input type="hidden" id="calculator-service-id" name="service_id" value="">
+        <input type="hidden" id="calculator-location-id" name="location_id" value="">
+        <input type="hidden" id="calculator-price" name="price" value="0">
+
         <div class="card border-0 shadow-sm mb-2">
             <div class="card-body p-3">
-                <div class="row g-2 align-items-end">
-                    <div class="col-12 col-md-6 col-xl-4">
-                        <label for="calculator-client-phone" class="form-label mb-1">Клиент: телефон</label>
-                        <input id="calculator-client-phone" type="text" class="form-control" placeholder="+7..." list="client-phone-suggestions" required>
-                        <datalist id="client-phone-suggestions"></datalist>
+                <div class="row g-2">
+                    <div class="col-12 col-md-6">
+                        <label for="calc-client-phone" class="form-label mb-1">Телефон</label>
+                        <input id="calc-client-phone" type="text" class="form-control" list="calc-client-phone-suggestions" required>
+                        <datalist id="calc-client-phone-suggestions"></datalist>
                     </div>
-                    <div class="col-12 col-md-6 col-xl-4">
-                        <label for="calculator-client-name" class="form-label mb-1">Имя</label>
-                        <input id="calculator-client-name" type="text" class="form-control" placeholder="Имя клиента" required>
+                    <div class="col-12 col-md-6">
+                        <label for="calc-client-name" class="form-label mb-1">Имя</label>
+                        <input id="calc-client-name" type="text" class="form-control" required>
                     </div>
                 </div>
             </div>
@@ -21,64 +26,274 @@
 
         <div class="card border-0 shadow-sm mb-2">
             <div class="card-body p-3">
-                <div class="row g-2 align-items-end">
-                    <div class="col-12 col-lg-5">
-                        <label for="calculator-service-search" class="form-label mb-1">Услуга: быстрый поиск</label>
-                        <input id="calculator-service-search" type="text" class="form-control" placeholder="Начните вводить..." list="service-suggestions">
-                        <datalist id="service-suggestions"></datalist>
-                    </div>
-                    <div class="col-12 col-lg-5">
-                        <label for="calculator-service" class="form-label mb-1">Выбор услуги</label>
-                        <select id="calculator-service" class="form-select" required>
-                            <option value="">Выберите услугу...</option>
-                        </select>
-                    </div>
-                    <div class="col-12 col-lg-2">
-                        <div class="small text-muted mb-1">Базовая</div>
-                        <div id="calculator-base-price" class="calc-base-price">0 RUB</div>
-                    </div>
+                <div class="d-flex flex-wrap gap-2" id="calc-categories">
+                    {% for category in categories %}
+                    <button type="button" class="btn btn-outline-dark calc-category-btn" data-category="{{ category }}">{{ category }}</button>
+                    {% endfor %}
                 </div>
+            </div>
+        </div>
 
-                <div class="row g-2 mt-1">
-                    <div class="col-12">
-                        <div id="calculator-fields" class="calc-fields-shell"></div>
-                    </div>
-                </div>
+        <div class="card border-0 shadow-sm mb-2">
+            <div class="card-body p-3" id="calc-services-block">
+                <div class="small text-muted">Выберите категорию</div>
+            </div>
+        </div>
 
-                <div class="calc-total-inline mt-2">
-                    <span class="text-muted small me-2">Итого:</span>
-                    <span id="calculator-total" class="calc-total-value">0 RUB</span>
-                </div>
+        <div class="card border-0 shadow-sm mb-2">
+            <div class="card-body p-3" id="calc-locations-block">
+                <div class="small text-muted">Выберите услугу</div>
             </div>
         </div>
 
         <div class="card border-0 shadow-sm mb-5">
-            <div class="card-body p-3">
-                <div class="row g-2 align-items-end">
-                    <div class="col-12 col-lg-6">
-                        <label for="calculator-executor" class="form-label mb-1">Исполнитель</label>
-                        <select id="calculator-executor" class="form-select">
-                            <option value="">Автоназначение</option>
-                        </select>
-                    </div>
-                    <div class="col-12 col-lg-4">
-                        <div id="calculator-executor-load" class="small text-muted">Загрузка: -</div>
-                    </div>
-                    <div class="col-12 col-lg-2 d-grid">
-                        <button type="button" id="calculator-autoassign" class="btn btn-outline-secondary">Автоназначить</button>
-                    </div>
-                </div>
+            <div class="card-body p-3" id="calc-executors-block">
+                <div class="small text-muted">Выберите точку</div>
             </div>
         </div>
 
         <div class="calc-actions-fixed">
-            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
-                <span id="calculator-status" class="small text-muted"></span>
-                <button type="button" id="calculator-create-order" class="btn btn-primary btn-lg" disabled>
-                    Создать заказ
-                </button>
+            <div class="d-flex align-items-center justify-content-between gap-2">
+                <div id="calc-total-inline" class="calc-total-value">Итого: 0 RUB</div>
+                <button type="submit" id="calc-create-order" class="btn btn-primary btn-lg" disabled>Создать заказ</button>
             </div>
+            <div id="calc-status" class="small text-muted mt-1"></div>
         </div>
     </form>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const form = document.getElementById('calculator-pos-form');
+    if (!form) return;
+
+    const categoryInput = document.getElementById('calculator-category');
+    const serviceIdInput = document.getElementById('calculator-service-id');
+    const locationIdInput = document.getElementById('calculator-location-id');
+    const priceInput = document.getElementById('calculator-price');
+    const servicesBlock = document.getElementById('calc-services-block');
+    const locationsBlock = document.getElementById('calc-locations-block');
+    const executorsBlock = document.getElementById('calc-executors-block');
+    const createBtn = document.getElementById('calc-create-order');
+    const totalInline = document.getElementById('calc-total-inline');
+    const statusEl = document.getElementById('calc-status');
+    const phoneInput = document.getElementById('calc-client-phone');
+    const nameInput = document.getElementById('calc-client-name');
+    const phoneSuggestions = document.getElementById('calc-client-phone-suggestions');
+
+    let clientTimer = null;
+
+    function setStatus(text, isError) {
+        statusEl.textContent = text || '';
+        statusEl.className = isError ? 'small text-danger mt-1' : 'small text-muted mt-1';
+    }
+
+    function updateTotal(price, currency) {
+        const c = currency || 'RUB';
+        totalInline.textContent = `Итого: ${new Intl.NumberFormat('ru-RU').format(Number(price || 0))} ${c}`;
+    }
+
+    function updateCanSubmit() {
+        const valid = String(serviceIdInput.value || '').trim() && String(locationIdInput.value || '').trim() && String(nameInput.value || '').trim() && String(phoneInput.value || '').trim();
+        createBtn.disabled = !valid;
+    }
+
+    function resetBelowService() {
+        locationIdInput.value = '';
+        priceInput.value = '0';
+        locationsBlock.innerHTML = '<div class="small text-muted">Выберите услугу</div>';
+        executorsBlock.innerHTML = '<div class="small text-muted">Выберите точку</div>';
+        updateTotal(0, 'RUB');
+        updateCanSubmit();
+    }
+
+    function resetBelowLocation() {
+        executorsBlock.innerHTML = '<div class="small text-muted">Выберите точку</div>';
+        updateCanSubmit();
+    }
+
+    document.querySelectorAll('.calc-category-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            const category = String(btn.dataset.category || '').trim();
+            categoryInput.value = category;
+            serviceIdInput.value = '';
+            resetBelowService();
+
+            document.querySelectorAll('.calc-category-btn').forEach(function (b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+
+            htmx.ajax('GET', `/calculator/services?category=${encodeURIComponent(category)}`, {
+                target: '#calc-services-block',
+                swap: 'innerHTML'
+            });
+        });
+    });
+
+    document.body.addEventListener('change', function (event) {
+        const serviceSelect = event.target.closest('#calc-service-select');
+        if (serviceSelect) {
+            const serviceId = Number(serviceSelect.value || 0);
+            serviceIdInput.value = serviceId > 0 ? String(serviceId) : '';
+            resetBelowService();
+            if (serviceId > 0) {
+                htmx.ajax('GET', `/calculator/locations?service_id=${serviceId}`, {
+                    target: '#calc-locations-block',
+                    swap: 'innerHTML'
+                });
+            }
+            return;
+        }
+
+        const executorSelect = event.target.closest('#calc-executor-select');
+        if (executorSelect) {
+            updateCanSubmit();
+        }
+    });
+
+    document.body.addEventListener('click', function (event) {
+        const locationBtn = event.target.closest('.calc-location-btn');
+        if (locationBtn) {
+            const locationId = Number(locationBtn.dataset.locationId || 0);
+            const serviceId = Number(serviceIdInput.value || 0);
+            const price = Number(locationBtn.dataset.price || 0);
+
+            if (locationId <= 0 || serviceId <= 0) return;
+
+            document.querySelectorAll('.calc-location-btn').forEach(function (btn) { btn.classList.remove('active'); });
+            locationBtn.classList.add('active');
+
+            locationIdInput.value = String(locationId);
+            priceInput.value = String(price);
+            updateTotal(price, 'RUB');
+            resetBelowLocation();
+
+            htmx.ajax('GET', `/calculator/executors?location_id=${locationId}&service_id=${serviceId}&category=${encodeURIComponent(categoryInput.value || '')}`, {
+                target: '#calc-executors-block',
+                swap: 'innerHTML'
+            });
+            updateCanSubmit();
+            return;
+        }
+
+        const autoBtn = event.target.closest('#calc-auto-executor');
+        if (autoBtn) {
+            const select = document.getElementById('calc-executor-select');
+            if (!select || !select.options.length) return;
+            let best = '';
+            let bestScore = Number.MAX_SAFE_INTEGER;
+            Array.from(select.options).forEach(function (opt) {
+                if (!opt.value) return;
+                const load = Number(opt.dataset.active || 0);
+                const max = Math.max(Number(opt.dataset.max || 1), 1);
+                const score = load / max;
+                if (score < bestScore) {
+                    bestScore = score;
+                    best = opt.value;
+                }
+            });
+            if (best) {
+                select.value = best;
+                updateCanSubmit();
+            }
+        }
+    });
+
+    document.body.addEventListener('input', function (event) {
+        const serviceSearch = event.target.closest('#calc-service-search');
+        if (serviceSearch) {
+            const search = String(serviceSearch.value || '').toLowerCase();
+            const select = document.getElementById('calc-service-select');
+            if (!select) return;
+            Array.from(select.options).forEach(function (opt, idx) {
+                if (idx === 0) return;
+                const visible = String(opt.textContent || '').toLowerCase().includes(search);
+                opt.hidden = !visible;
+            });
+            return;
+        }
+
+        if (event.target === nameInput || event.target === phoneInput) {
+            updateCanSubmit();
+        }
+
+        if (event.target === phoneInput) {
+            window.clearTimeout(clientTimer);
+            const q = String(phoneInput.value || '').trim();
+            if (q.length < 2) return;
+            clientTimer = window.setTimeout(async function () {
+                try {
+                    const response = await fetch(`/api/v1/orders/clients/search?phone=${encodeURIComponent(q)}`);
+                    if (!response.ok) throw new Error('clients_search_failed');
+                    const clients = await response.json();
+                    phoneSuggestions.innerHTML = '';
+                    (clients || []).forEach(function (client) {
+                        const option = document.createElement('option');
+                        option.value = String(client.phone || '');
+                        option.label = String(client.name || '');
+                        phoneSuggestions.appendChild(option);
+                    });
+                    const exact = (clients || []).find(function (client) { return String(client.phone || '') === q; });
+                    if (exact && !String(nameInput.value || '').trim()) {
+                        nameInput.value = String(exact.name || '');
+                        updateCanSubmit();
+                    }
+                } catch (_err) {
+                    setStatus('Не удалось найти клиента.', true);
+                }
+            }, 200);
+        }
+    });
+
+    form.addEventListener('submit', async function (event) {
+        event.preventDefault();
+
+        const serviceId = Number(serviceIdInput.value || 0);
+        const locationId = Number(locationIdInput.value || 0);
+        const price = Number(priceInput.value || 0);
+        const name = String(nameInput.value || '').trim();
+        const phone = String(phoneInput.value || '').trim();
+        const executorSelect = document.getElementById('calc-executor-select');
+        const executorId = executorSelect ? Number(executorSelect.value || 0) : 0;
+
+        if (!serviceId || !locationId || !name || !phone) {
+            setStatus('Заполните обязательные поля.', true);
+            return;
+        }
+
+        createBtn.disabled = true;
+        setStatus('Создаем заказ...', false);
+
+        try {
+            const response = await fetch('/api/v1/orders', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    client: { name, phone },
+                    service_id: serviceId,
+                    location_id: locationId,
+                    preferred_executor_id: executorId || undefined,
+                    items: [
+                        {
+                            service_id: serviceId,
+                            quantity: 1,
+                            unit_price: price,
+                        },
+                    ],
+                }),
+            });
+
+            if (!response.ok) throw new Error('order_create_failed');
+
+            const data = await response.json();
+            setStatus(`Заказ создан: ${data.order_no || data.id}`, false);
+        } catch (_err) {
+            setStatus('Ошибка создания заказа.', true);
+        } finally {
+            updateCanSubmit();
+        }
+    });
+})();
+</script>
 {% endblock %}

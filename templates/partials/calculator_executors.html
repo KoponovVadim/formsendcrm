@@ -1,0 +1,20 @@
+{% if executors %}
+<div class="row g-2 align-items-end">
+    <div class="col-12 col-md-9">
+        <label for="calc-executor-select" class="form-label mb-1">Исполнитель</label>
+        <select id="calc-executor-select" class="form-select">
+            <option value="">Выберите исполнителя...</option>
+            {% for executor in executors %}
+            <option value="{{ executor.id }}" data-active="{{ executor.current_active_tasks }}" data-max="{{ executor.max_active_tasks }}">
+                {{ executor.name }} ({{ executor.current_active_tasks }}/{{ executor.max_active_tasks }})
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-12 col-md-3 d-grid">
+        <button type="button" id="calc-auto-executor" class="btn btn-outline-secondary">Автоназначить</button>
+    </div>
+</div>
+{% else %}
+<div class="small text-muted">Нет доступных мастеров для этой точки.</div>
+{% endif %}

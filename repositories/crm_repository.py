@@ -1,8 +1,8 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models.crm import Client, Executor, Order, OrderItem, Service, Task
+from models.crm import Client, Executor, Location, LocationPrice, Order, OrderItem, Service, Task
 
 
 class CRMRepository:
@@ -25,6 +25,78 @@ class CRMRepository:
     async def get_service(self, service_id: int) -> Service | None:
         return (await self.db.execute(select(Service).where(Service.id == service_id))).scalar_one_or_none()
 
+    async def list_service_categories(self) -> list[str]:
+        rows = (await self.db.execute(select(Service.category).where(Service.is_active == True).distinct().order_by(Service.category.asc()))).all()
+        return [str(row[0]) for row in rows if row and row[0]]
+
+    async def list_services_by_category(self, category: str, query: str = "") -> list[Service]:
+        stmt = select(Service).where(Service.is_active == True)
+        if category:
+            stmt = stmt.where(Service.category == category)
+        if query:
+            stmt = stmt.where(Service.name.ilike(f"%{query}%"))
+        stmt = stmt.order_by(Service.name.asc()).limit(100)
+        return list((await self.db.execute(stmt)).scalars().all())
+
+    async def list_locations_for_service(self, service_id: int) -> list[tuple[Location, float, int]]:
+        rows = (
+            await self.db.execute(
+                select(Location, LocationPrice.price)
+                .join(LocationPrice, LocationPrice.location_id == Location.id)
+                .where(Location.is_active == True, LocationPrice.service_id == service_id)
+                .order_by(Location.name.asc())
+            )
+        ).all()
+
+        if not rows:
+            return []
+
+        location_ids = [int(location.id) for location, _ in rows]
+        counts = (
+            await self.db.execute(
+                select(Order.location_id, func.count(Order.id))
+                .where(Order.location_id.in_(location_ids))
+                .group_by(Order.location_id)
+            )
+        ).all()
+        count_map = {int(location_id): int(total) for location_id, total in counts}
+
+        return [
+            (location, float(price or 0), count_map.get(int(location.id), 0))
+            for location, price in rows
+        ]
+
+    async def list_executors_for_location_and_category(self, location_id: int, category: str) -> list[Executor]:
+        stmt = (
+            select(Executor)
+            .where(Executor.is_active == True, Executor.location_id == location_id)
+            .options(selectinload(Executor.skills))
+            .order_by(Executor.current_active_tasks.asc(), Executor.name.asc())
+        )
+
+        executors = list((await self.db.execute(stmt)).scalars().all())
+        if not category:
+            return executors
+
+        result = []
+        for executor in executors:
+            has_category = any(str(skill.service_category or "") == str(category) for skill in (executor.skills or []))
+            if has_category:
+                result.append(executor)
+        return result
+
+    async def get_location_price(self, location_id: int, service_id: int) -> float | None:
+        value = (
+            await self.db.execute(
+                select(LocationPrice.price)
+                .where(LocationPrice.location_id == location_id, LocationPrice.service_id == service_id)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if value is None:
+            return None
+        return float(value)
+
     async def search_services(self, query: str, include_inactive: bool = False) -> list[Service]:
         stmt = select(Service)
         if not include_inactive:
@@ -41,6 +113,7 @@ class CRMRepository:
             .where(Order.id == order_id)
             .options(
                 selectinload(Order.client),
+                selectinload(Order.location),
                 selectinload(Order.items).selectinload(OrderItem.service),
                 selectinload(Order.tasks).selectinload(Task.executor),
             )

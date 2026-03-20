@@ -14,6 +14,7 @@ from app.schema_loader import seed_modules, get_all_modules
 from app.routes_auth import router as auth_router
 from app.routes_modules import router as modules_router
 from app.routes_admin import router as admin_router
+from app.routes_calculator import router as calculator_router
 from app.database import get_db
 from api.orders import router as orders_api_router
 from api.catalog import router as catalog_api_router
@@ -77,6 +78,7 @@ templates = Jinja2Templates(directory="templates")
 app.include_router(auth_router)
 app.include_router(modules_router)
 app.include_router(admin_router)
+app.include_router(calculator_router)
 app.include_router(orders_api_router)
 app.include_router(catalog_api_router)
 app.include_router(chats_api_router)
@@ -110,17 +112,3 @@ async def dashboard(
     })
 
 
-@app.get("/calculator", response_class=HTMLResponse)
-async def calculator_page(
-    request: Request,
-    user=Depends(get_current_user),
-    db=Depends(get_db),
-):
-    modules = await get_all_modules(db)
-    modules = filter_visible_modules_for_user(modules, user)
-
-    return templates.TemplateResponse("calculator.html", {
-        "request": request,
-        "user": user,
-        "modules": modules,
-    })

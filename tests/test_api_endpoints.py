@@ -348,7 +348,7 @@ async def test_catalog_points_endpoints_denied_without_manage_access(async_clien
     assert delete_response.status_code == 403
 
 
-async def test_orders_create_then_get_includes_calculator_breakdown(async_client, db_session):
+async def test_orders_create_then_get_uses_fixed_price_flow(async_client, db_session):
     service = Service(
         slug="screen-repair-api",
         name="Screen repair API",
@@ -389,10 +389,11 @@ async def test_orders_create_then_get_includes_calculator_breakdown(async_client
     assert get_response.status_code == 200
     order_data = get_response.json()
 
-    assert order_data["total_amount"] == 400
+    assert order_data["total_amount"] == 300
     assert len(order_data["items"]) == 1
-    assert order_data["items"][0]["unit_price"] == 200
+    assert order_data["items"][0]["unit_price"] == 150
     assert isinstance(order_data["items"][0]["calculator_breakdown"], list)
+    assert order_data["items"][0]["calculator_breakdown"] == []
 
 
 async def test_orders_create_returns_400_for_invalid_service_id(async_client):
