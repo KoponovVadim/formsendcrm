@@ -35,6 +35,8 @@ class OrderService:
         self.db.add(order)
         await self.db.flush()
 
+        preferred_executor_id = int(payload.get("preferred_executor_id", 0) or 0)
+
         total = Decimal("0")
         for item_payload in payload.get("items", []):
             service_id = item_payload.get("service_id")
@@ -76,7 +78,11 @@ class OrderService:
             self.db.add(item)
             await self.db.flush()
 
-            await self._create_and_assign_task(order=order, item=item)
+            await self._create_and_assign_task(
+                order=order,
+                item=item,
+                preferred_executor_id=preferred_executor_id,
+            )
 
         order.total_amount = total
 
@@ -94,12 +100,21 @@ class OrderService:
         await event_bus.publish("orders", {"type": "order_created", "order_id": order.id, "order_no": order.order_no})
         return order
 
-    async def _create_and_assign_task(self, order: Order, item: OrderItem) -> Task:
+    async def _create_and_assign_task(self, order: Order, item: OrderItem, preferred_executor_id: int = 0) -> Task:
         service = await self.repo.get_service(item.service_id) if item.service_id else None
         service_category = service.category if service else "repair"
         executors = await self.repo.active_executors()
 
-        selected, score = choose_best_executor(executors, service_category, order.priority)
+        selected = None
+        score = 0
+
+        if preferred_executor_id > 0:
+            selected = next((e for e in executors if int(e.id) == preferred_executor_id and bool(e.is_active)), None)
+            if selected:
+                score = 100
+
+        if not selected:
+            selected, score = choose_best_executor(executors, service_category, order.priority)
 
         task = Task(
             order_id=order.id,

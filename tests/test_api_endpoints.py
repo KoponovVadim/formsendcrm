@@ -419,6 +419,62 @@ async def test_orders_create_returns_400_when_no_price_source(async_client):
     assert "Either unit_price or valid service_id is required" in response.json()["detail"]
 
 
+async def test_orders_client_search_returns_matches(async_client, db_session):
+    from models.crm import Client
+
+    db_session.add_all(
+        [
+            Client(name="Alice", phone="79001112233", email=""),
+            Client(name="Bob", phone="79005556677", email=""),
+        ]
+    )
+    await db_session.commit()
+
+    response = await async_client.get("/api/v1/orders/clients/search?phone=7900")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 2
+    phones = {item["phone"] for item in data}
+    assert "79001112233" in phones
+    assert "79005556677" in phones
+
+
+async def test_orders_create_respects_preferred_executor(async_client, db_session):
+    service = Service(
+        slug="preferred-executor-service",
+        name="Preferred executor service",
+        category="repair",
+        is_active=True,
+        base_price=100,
+        calculator_schema={"fields": []},
+    )
+    db_session.add(service)
+    await db_session.flush()
+
+    executor = Executor(name="Preferred Executor", is_active=True, current_active_tasks=0, max_active_tasks=5)
+    db_session.add(executor)
+    await db_session.flush()
+    db_session.add(ExecutorSkill(executor_id=executor.id, service_category="repair", level=1))
+    await db_session.commit()
+
+    response = await async_client.post(
+        "/api/v1/orders",
+        json={
+            "preferred_executor_id": executor.id,
+            "client": {"name": "Preferred Client", "phone": "70000000000"},
+            "items": [{"service_id": service.id, "quantity": 1}],
+        },
+    )
+    assert response.status_code == 200
+    order_id = response.json()["id"]
+
+    order_response = await async_client.get(f"/api/v1/orders/{order_id}")
+    assert order_response.status_code == 200
+    payload = order_response.json()
+    assert len(payload["tasks"]) == 1
+    assert payload["tasks"][0]["executor_id"] == executor.id
+
+
 async def test_chats_endpoints_incoming_messages_send_and_suggest(async_client, db_session):
     incoming_response = await async_client.post(
         "/api/v1/chats/incoming",
