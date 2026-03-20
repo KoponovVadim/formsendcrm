@@ -17,245 +17,281 @@ branch_labels = None
 depends_on = None
 
 
+def _table_exists(table_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return table_name in inspector.get_table_names()
+
+
+def _index_exists(table_name: str, index_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    if table_name not in inspector.get_table_names():
+        return False
+    return any(index.get("name") == index_name for index in inspector.get_indexes(table_name))
+
+
+def _create_index_if_missing(
+    index_name: str,
+    table_name: str,
+    columns: list[str],
+    unique: bool = False,
+) -> None:
+    if _index_exists(table_name, index_name):
+        return
+    op.create_index(index_name, table_name, columns, unique=unique)
+
+
 def upgrade() -> None:
-    op.create_table(
-        "audit_logs",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("entity_type", sa.String(length=50), nullable=False),
-        sa.Column("entity_id", sa.Integer(), nullable=False),
-        sa.Column("action", sa.String(length=50), nullable=False),
-        sa.Column("actor_user_id", sa.Integer(), nullable=True),
-        sa.Column("before_data", sa.JSON(), nullable=True),
-        sa.Column("after_data", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["actor_user_id"], ["users.id"]),
-    )
-    op.create_index("ix_audit_logs_entity_type", "audit_logs", ["entity_type"])
-    op.create_index("ix_audit_logs_entity_id", "audit_logs", ["entity_id"])
-    op.create_index("ix_audit_logs_action", "audit_logs", ["action"])
-    op.create_index("ix_audit_logs_created_at", "audit_logs", ["created_at"])
+    if not _table_exists("audit_logs"):
+        op.create_table(
+            "audit_logs",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("entity_type", sa.String(length=50), nullable=False),
+            sa.Column("entity_id", sa.Integer(), nullable=False),
+            sa.Column("action", sa.String(length=50), nullable=False),
+            sa.Column("actor_user_id", sa.Integer(), nullable=True),
+            sa.Column("before_data", sa.JSON(), nullable=True),
+            sa.Column("after_data", sa.JSON(), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+            sa.ForeignKeyConstraint(["actor_user_id"], ["users.id"]),
+        )
+    _create_index_if_missing("ix_audit_logs_entity_type", "audit_logs", ["entity_type"])
+    _create_index_if_missing("ix_audit_logs_entity_id", "audit_logs", ["entity_id"])
+    _create_index_if_missing("ix_audit_logs_action", "audit_logs", ["action"])
+    _create_index_if_missing("ix_audit_logs_created_at", "audit_logs", ["created_at"])
 
-    op.create_table(
-        "clients",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("phone", sa.String(length=50), nullable=True),
-        sa.Column("email", sa.String(length=255), nullable=True),
-        sa.Column("stage", sa.String(length=30), nullable=True),
-        sa.Column("source", sa.String(length=100), nullable=True),
-        sa.Column("meta", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.create_index("ix_clients_name", "clients", ["name"])
-    op.create_index("ix_clients_phone", "clients", ["phone"])
-    op.create_index("ix_clients_email", "clients", ["email"])
-    op.create_index("ix_clients_stage", "clients", ["stage"])
+    if not _table_exists("clients"):
+        op.create_table(
+            "clients",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("name", sa.String(length=255), nullable=False),
+            sa.Column("phone", sa.String(length=50), nullable=True),
+            sa.Column("email", sa.String(length=255), nullable=True),
+            sa.Column("stage", sa.String(length=30), nullable=True),
+            sa.Column("source", sa.String(length=100), nullable=True),
+            sa.Column("meta", sa.JSON(), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+        )
+    _create_index_if_missing("ix_clients_name", "clients", ["name"])
+    _create_index_if_missing("ix_clients_phone", "clients", ["phone"])
+    _create_index_if_missing("ix_clients_email", "clients", ["email"])
+    _create_index_if_missing("ix_clients_stage", "clients", ["stage"])
 
-    op.create_table(
-        "departments",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("name", sa.String(length=120), nullable=False),
-        sa.Column("code", sa.String(length=60), nullable=False),
-        sa.UniqueConstraint("name", name="uq_departments_name"),
-        sa.UniqueConstraint("code", name="uq_departments_code"),
-    )
-    op.create_index("ix_departments_name", "departments", ["name"])
-    op.create_index("ix_departments_code", "departments", ["code"])
+    if not _table_exists("departments"):
+        op.create_table(
+            "departments",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("name", sa.String(length=120), nullable=False),
+            sa.Column("code", sa.String(length=60), nullable=False),
+            sa.UniqueConstraint("name", name="uq_departments_name"),
+            sa.UniqueConstraint("code", name="uq_departments_code"),
+        )
+    _create_index_if_missing("ix_departments_name", "departments", ["name"])
+    _create_index_if_missing("ix_departments_code", "departments", ["code"])
 
-    op.create_table(
-        "services",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("slug", sa.String(length=150), nullable=False),
-        sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("category", sa.String(length=30), nullable=False),
-        sa.Column("is_active", sa.Boolean(), nullable=True),
-        sa.Column("base_price", sa.Numeric(12, 2), nullable=True),
-        sa.Column("calculator_schema", sa.JSON(), nullable=True),
-        sa.UniqueConstraint("slug", name="uq_services_slug"),
-    )
-    op.create_index("ix_services_slug", "services", ["slug"])
-    op.create_index("ix_services_name", "services", ["name"])
-    op.create_index("ix_services_category", "services", ["category"])
-    op.create_index("ix_services_is_active", "services", ["is_active"])
+    if not _table_exists("services"):
+        op.create_table(
+            "services",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("slug", sa.String(length=150), nullable=False),
+            sa.Column("name", sa.String(length=255), nullable=False),
+            sa.Column("category", sa.String(length=30), nullable=False),
+            sa.Column("is_active", sa.Boolean(), nullable=True),
+            sa.Column("base_price", sa.Numeric(12, 2), nullable=True),
+            sa.Column("calculator_schema", sa.JSON(), nullable=True),
+            sa.UniqueConstraint("slug", name="uq_services_slug"),
+        )
+    _create_index_if_missing("ix_services_slug", "services", ["slug"])
+    _create_index_if_missing("ix_services_name", "services", ["name"])
+    _create_index_if_missing("ix_services_category", "services", ["category"])
+    _create_index_if_missing("ix_services_is_active", "services", ["is_active"])
 
-    op.create_table(
-        "executors",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=True),
-        sa.Column("department_id", sa.Integer(), nullable=True),
-        sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("is_active", sa.Boolean(), nullable=True),
-        sa.Column("max_active_tasks", sa.Integer(), nullable=True),
-        sa.Column("current_active_tasks", sa.Integer(), nullable=True),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
-        sa.ForeignKeyConstraint(["department_id"], ["departments.id"]),
-    )
-    op.create_index("ix_executors_user_id", "executors", ["user_id"])
-    op.create_index("ix_executors_department_id", "executors", ["department_id"])
-    op.create_index("ix_executors_name", "executors", ["name"])
-    op.create_index("ix_executors_is_active", "executors", ["is_active"])
-    op.create_index("ix_executors_current_active_tasks", "executors", ["current_active_tasks"])
-    op.create_index("ix_executors_active_load", "executors", ["is_active", "current_active_tasks"])
+    if not _table_exists("executors"):
+        op.create_table(
+            "executors",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("user_id", sa.Integer(), nullable=True),
+            sa.Column("department_id", sa.Integer(), nullable=True),
+            sa.Column("name", sa.String(length=255), nullable=False),
+            sa.Column("is_active", sa.Boolean(), nullable=True),
+            sa.Column("max_active_tasks", sa.Integer(), nullable=True),
+            sa.Column("current_active_tasks", sa.Integer(), nullable=True),
+            sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
+            sa.ForeignKeyConstraint(["department_id"], ["departments.id"]),
+        )
+    _create_index_if_missing("ix_executors_user_id", "executors", ["user_id"])
+    _create_index_if_missing("ix_executors_department_id", "executors", ["department_id"])
+    _create_index_if_missing("ix_executors_name", "executors", ["name"])
+    _create_index_if_missing("ix_executors_is_active", "executors", ["is_active"])
+    _create_index_if_missing("ix_executors_current_active_tasks", "executors", ["current_active_tasks"])
+    _create_index_if_missing("ix_executors_active_load", "executors", ["is_active", "current_active_tasks"])
 
-    op.create_table(
-        "executor_skills",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("executor_id", sa.Integer(), nullable=False),
-        sa.Column("service_category", sa.String(length=30), nullable=False),
-        sa.Column("level", sa.Integer(), nullable=True),
-        sa.ForeignKeyConstraint(["executor_id"], ["executors.id"]),
-    )
-    op.create_index("ix_executor_skills_executor_id", "executor_skills", ["executor_id"])
-    op.create_index("ix_executor_skills_service_category", "executor_skills", ["service_category"])
+    if not _table_exists("executor_skills"):
+        op.create_table(
+            "executor_skills",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("executor_id", sa.Integer(), nullable=False),
+            sa.Column("service_category", sa.String(length=30), nullable=False),
+            sa.Column("level", sa.Integer(), nullable=True),
+            sa.ForeignKeyConstraint(["executor_id"], ["executors.id"]),
+        )
+    _create_index_if_missing("ix_executor_skills_executor_id", "executor_skills", ["executor_id"])
+    _create_index_if_missing("ix_executor_skills_service_category", "executor_skills", ["service_category"])
 
-    op.create_table(
-        "orders",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("order_no", sa.String(length=64), nullable=False),
-        sa.Column("client_id", sa.Integer(), nullable=False),
-        sa.Column("status", sa.String(length=30), nullable=True),
-        sa.Column("priority", sa.Integer(), nullable=True),
-        sa.Column("source_channel", sa.String(length=60), nullable=True),
-        sa.Column("total_amount", sa.Numeric(12, 2), nullable=True),
-        sa.Column("currency", sa.String(length=3), nullable=True),
-        sa.Column("created_by_user_id", sa.Integer(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["client_id"], ["clients.id"]),
-        sa.ForeignKeyConstraint(["created_by_user_id"], ["users.id"]),
-        sa.UniqueConstraint("order_no", name="uq_orders_order_no"),
-    )
-    op.create_index("ix_orders_order_no", "orders", ["order_no"])
-    op.create_index("ix_orders_client_id", "orders", ["client_id"])
-    op.create_index("ix_orders_status", "orders", ["status"])
-    op.create_index("ix_orders_priority", "orders", ["priority"])
-    op.create_index("ix_orders_source_channel", "orders", ["source_channel"])
-    op.create_index("ix_orders_created_by_user_id", "orders", ["created_by_user_id"])
-    op.create_index("ix_orders_created_at", "orders", ["created_at"])
-    op.create_index("ix_orders_updated_at", "orders", ["updated_at"])
-    op.create_index("ix_orders_client_status", "orders", ["client_id", "status"])
+    if not _table_exists("orders"):
+        op.create_table(
+            "orders",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("order_no", sa.String(length=64), nullable=False),
+            sa.Column("client_id", sa.Integer(), nullable=False),
+            sa.Column("status", sa.String(length=30), nullable=True),
+            sa.Column("priority", sa.Integer(), nullable=True),
+            sa.Column("source_channel", sa.String(length=60), nullable=True),
+            sa.Column("total_amount", sa.Numeric(12, 2), nullable=True),
+            sa.Column("currency", sa.String(length=3), nullable=True),
+            sa.Column("created_by_user_id", sa.Integer(), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+            sa.ForeignKeyConstraint(["client_id"], ["clients.id"]),
+            sa.ForeignKeyConstraint(["created_by_user_id"], ["users.id"]),
+            sa.UniqueConstraint("order_no", name="uq_orders_order_no"),
+        )
+    _create_index_if_missing("ix_orders_order_no", "orders", ["order_no"])
+    _create_index_if_missing("ix_orders_client_id", "orders", ["client_id"])
+    _create_index_if_missing("ix_orders_status", "orders", ["status"])
+    _create_index_if_missing("ix_orders_priority", "orders", ["priority"])
+    _create_index_if_missing("ix_orders_source_channel", "orders", ["source_channel"])
+    _create_index_if_missing("ix_orders_created_by_user_id", "orders", ["created_by_user_id"])
+    _create_index_if_missing("ix_orders_created_at", "orders", ["created_at"])
+    _create_index_if_missing("ix_orders_updated_at", "orders", ["updated_at"])
+    _create_index_if_missing("ix_orders_client_status", "orders", ["client_id", "status"])
 
-    op.create_table(
-        "order_items",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("order_id", sa.Integer(), nullable=False),
-        sa.Column("service_id", sa.Integer(), nullable=True),
-        sa.Column("title", sa.String(length=255), nullable=True),
-        sa.Column("quantity", sa.Integer(), nullable=True),
-        sa.Column("unit_price", sa.Numeric(12, 2), nullable=True),
-        sa.Column("line_total", sa.Numeric(12, 2), nullable=True),
-        sa.Column("status", sa.String(length=30), nullable=True),
-        sa.Column("calculator_payload", sa.JSON(), nullable=True),
-        sa.ForeignKeyConstraint(["order_id"], ["orders.id"]),
-        sa.ForeignKeyConstraint(["service_id"], ["services.id"]),
-    )
-    op.create_index("ix_order_items_order_id", "order_items", ["order_id"])
-    op.create_index("ix_order_items_service_id", "order_items", ["service_id"])
-    op.create_index("ix_order_items_status", "order_items", ["status"])
-    op.create_index("ix_order_items_order_status", "order_items", ["order_id", "status"])
+    if not _table_exists("order_items"):
+        op.create_table(
+            "order_items",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("order_id", sa.Integer(), nullable=False),
+            sa.Column("service_id", sa.Integer(), nullable=True),
+            sa.Column("title", sa.String(length=255), nullable=True),
+            sa.Column("quantity", sa.Integer(), nullable=True),
+            sa.Column("unit_price", sa.Numeric(12, 2), nullable=True),
+            sa.Column("line_total", sa.Numeric(12, 2), nullable=True),
+            sa.Column("status", sa.String(length=30), nullable=True),
+            sa.Column("calculator_payload", sa.JSON(), nullable=True),
+            sa.ForeignKeyConstraint(["order_id"], ["orders.id"]),
+            sa.ForeignKeyConstraint(["service_id"], ["services.id"]),
+        )
+    _create_index_if_missing("ix_order_items_order_id", "order_items", ["order_id"])
+    _create_index_if_missing("ix_order_items_service_id", "order_items", ["service_id"])
+    _create_index_if_missing("ix_order_items_status", "order_items", ["status"])
+    _create_index_if_missing("ix_order_items_order_status", "order_items", ["order_id", "status"])
 
-    op.create_table(
-        "tasks",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("order_id", sa.Integer(), nullable=False),
-        sa.Column("order_item_id", sa.Integer(), nullable=True),
-        sa.Column("department_id", sa.Integer(), nullable=True),
-        sa.Column("executor_id", sa.Integer(), nullable=True),
-        sa.Column("title", sa.String(length=255), nullable=False),
-        sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("status", sa.String(length=30), nullable=True),
-        sa.Column("priority", sa.Integer(), nullable=True),
-        sa.Column("assignment_score", sa.Integer(), nullable=True),
-        sa.Column("due_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["order_id"], ["orders.id"]),
-        sa.ForeignKeyConstraint(["order_item_id"], ["order_items.id"]),
-        sa.ForeignKeyConstraint(["department_id"], ["departments.id"]),
-        sa.ForeignKeyConstraint(["executor_id"], ["executors.id"]),
-    )
-    op.create_index("ix_tasks_order_id", "tasks", ["order_id"])
-    op.create_index("ix_tasks_order_item_id", "tasks", ["order_item_id"])
-    op.create_index("ix_tasks_department_id", "tasks", ["department_id"])
-    op.create_index("ix_tasks_executor_id", "tasks", ["executor_id"])
-    op.create_index("ix_tasks_status", "tasks", ["status"])
-    op.create_index("ix_tasks_priority", "tasks", ["priority"])
-    op.create_index("ix_tasks_due_at", "tasks", ["due_at"])
-    op.create_index("ix_tasks_created_at", "tasks", ["created_at"])
-    op.create_index("ix_tasks_updated_at", "tasks", ["updated_at"])
-    op.create_index("ix_tasks_executor_status", "tasks", ["executor_id", "status"])
+    if not _table_exists("tasks"):
+        op.create_table(
+            "tasks",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("order_id", sa.Integer(), nullable=False),
+            sa.Column("order_item_id", sa.Integer(), nullable=True),
+            sa.Column("department_id", sa.Integer(), nullable=True),
+            sa.Column("executor_id", sa.Integer(), nullable=True),
+            sa.Column("title", sa.String(length=255), nullable=False),
+            sa.Column("description", sa.Text(), nullable=True),
+            sa.Column("status", sa.String(length=30), nullable=True),
+            sa.Column("priority", sa.Integer(), nullable=True),
+            sa.Column("assignment_score", sa.Integer(), nullable=True),
+            sa.Column("due_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+            sa.ForeignKeyConstraint(["order_id"], ["orders.id"]),
+            sa.ForeignKeyConstraint(["order_item_id"], ["order_items.id"]),
+            sa.ForeignKeyConstraint(["department_id"], ["departments.id"]),
+            sa.ForeignKeyConstraint(["executor_id"], ["executors.id"]),
+        )
+    _create_index_if_missing("ix_tasks_order_id", "tasks", ["order_id"])
+    _create_index_if_missing("ix_tasks_order_item_id", "tasks", ["order_item_id"])
+    _create_index_if_missing("ix_tasks_department_id", "tasks", ["department_id"])
+    _create_index_if_missing("ix_tasks_executor_id", "tasks", ["executor_id"])
+    _create_index_if_missing("ix_tasks_status", "tasks", ["status"])
+    _create_index_if_missing("ix_tasks_priority", "tasks", ["priority"])
+    _create_index_if_missing("ix_tasks_due_at", "tasks", ["due_at"])
+    _create_index_if_missing("ix_tasks_created_at", "tasks", ["created_at"])
+    _create_index_if_missing("ix_tasks_updated_at", "tasks", ["updated_at"])
+    _create_index_if_missing("ix_tasks_executor_status", "tasks", ["executor_id", "status"])
 
-    op.create_table(
-        "channels",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("type", sa.String(length=30), nullable=False),
-        sa.Column("name", sa.String(length=120), nullable=False),
-        sa.Column("status", sa.String(length=30), nullable=True),
-        sa.Column("settings", sa.JSON(), nullable=True),
-    )
-    op.create_index("ix_channels_type", "channels", ["type"])
-    op.create_index("ix_channels_name", "channels", ["name"])
-    op.create_index("ix_channels_status", "channels", ["status"])
+    if not _table_exists("channels"):
+        op.create_table(
+            "channels",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("type", sa.String(length=30), nullable=False),
+            sa.Column("name", sa.String(length=120), nullable=False),
+            sa.Column("status", sa.String(length=30), nullable=True),
+            sa.Column("settings", sa.JSON(), nullable=True),
+        )
+    _create_index_if_missing("ix_channels_type", "channels", ["type"])
+    _create_index_if_missing("ix_channels_name", "channels", ["name"])
+    _create_index_if_missing("ix_channels_status", "channels", ["status"])
 
-    op.create_table(
-        "conversations",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("channel_id", sa.Integer(), nullable=False),
-        sa.Column("client_id", sa.Integer(), nullable=True),
-        sa.Column("external_thread_id", sa.String(length=255), nullable=False),
-        sa.Column("status", sa.String(length=30), nullable=True),
-        sa.Column("assigned_executor_id", sa.Integer(), nullable=True),
-        sa.Column("last_message_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["channel_id"], ["channels.id"]),
-        sa.ForeignKeyConstraint(["client_id"], ["clients.id"]),
-        sa.ForeignKeyConstraint(["assigned_executor_id"], ["executors.id"]),
-    )
-    op.create_index("ix_conversations_channel_id", "conversations", ["channel_id"])
-    op.create_index("ix_conversations_client_id", "conversations", ["client_id"])
-    op.create_index("ix_conversations_external_thread_id", "conversations", ["external_thread_id"])
-    op.create_index("ix_conversations_status", "conversations", ["status"])
-    op.create_index("ix_conversations_assigned_executor_id", "conversations", ["assigned_executor_id"])
-    op.create_index("ix_conversations_last_message_at", "conversations", ["last_message_at"])
-    op.create_index(
+    if not _table_exists("conversations"):
+        op.create_table(
+            "conversations",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("channel_id", sa.Integer(), nullable=False),
+            sa.Column("client_id", sa.Integer(), nullable=True),
+            sa.Column("external_thread_id", sa.String(length=255), nullable=False),
+            sa.Column("status", sa.String(length=30), nullable=True),
+            sa.Column("assigned_executor_id", sa.Integer(), nullable=True),
+            sa.Column("last_message_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+            sa.ForeignKeyConstraint(["channel_id"], ["channels.id"]),
+            sa.ForeignKeyConstraint(["client_id"], ["clients.id"]),
+            sa.ForeignKeyConstraint(["assigned_executor_id"], ["executors.id"]),
+        )
+    _create_index_if_missing("ix_conversations_channel_id", "conversations", ["channel_id"])
+    _create_index_if_missing("ix_conversations_client_id", "conversations", ["client_id"])
+    _create_index_if_missing("ix_conversations_external_thread_id", "conversations", ["external_thread_id"])
+    _create_index_if_missing("ix_conversations_status", "conversations", ["status"])
+    _create_index_if_missing("ix_conversations_assigned_executor_id", "conversations", ["assigned_executor_id"])
+    _create_index_if_missing("ix_conversations_last_message_at", "conversations", ["last_message_at"])
+    _create_index_if_missing(
         "ix_conversations_channel_thread",
         "conversations",
         ["channel_id", "external_thread_id"],
         unique=True,
     )
 
-    op.create_table(
-        "messages",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("conversation_id", sa.Integer(), nullable=False),
-        sa.Column("direction", sa.String(length=10), nullable=False),
-        sa.Column("sender_name", sa.String(length=255), nullable=True),
-        sa.Column("text", sa.Text(), nullable=True),
-        sa.Column("payload", sa.JSON(), nullable=True),
-        sa.Column("ai_classification", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"]),
-    )
-    op.create_index("ix_messages_conversation_id", "messages", ["conversation_id"])
-    op.create_index("ix_messages_direction", "messages", ["direction"])
-    op.create_index("ix_messages_created_at", "messages", ["created_at"])
-    op.create_index("ix_messages_conversation_created", "messages", ["conversation_id", "created_at"])
+    if not _table_exists("messages"):
+        op.create_table(
+            "messages",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("conversation_id", sa.Integer(), nullable=False),
+            sa.Column("direction", sa.String(length=10), nullable=False),
+            sa.Column("sender_name", sa.String(length=255), nullable=True),
+            sa.Column("text", sa.Text(), nullable=True),
+            sa.Column("payload", sa.JSON(), nullable=True),
+            sa.Column("ai_classification", sa.JSON(), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+            sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"]),
+        )
+    _create_index_if_missing("ix_messages_conversation_id", "messages", ["conversation_id"])
+    _create_index_if_missing("ix_messages_direction", "messages", ["direction"])
+    _create_index_if_missing("ix_messages_created_at", "messages", ["created_at"])
+    _create_index_if_missing("ix_messages_conversation_created", "messages", ["conversation_id", "created_at"])
 
-    op.create_table(
-        "attachments",
-        sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
-        sa.Column("message_id", sa.Integer(), nullable=False),
-        sa.Column("file_name", sa.String(length=255), nullable=True),
-        sa.Column("file_url", sa.String(length=500), nullable=True),
-        sa.Column("mime_type", sa.String(length=120), nullable=True),
-        sa.Column("size_bytes", sa.Integer(), nullable=True),
-        sa.ForeignKeyConstraint(["message_id"], ["messages.id"]),
-    )
-    op.create_index("ix_attachments_message_id", "attachments", ["message_id"])
+    if not _table_exists("attachments"):
+        op.create_table(
+            "attachments",
+            sa.Column("id", sa.Integer(), primary_key=True, nullable=False),
+            sa.Column("message_id", sa.Integer(), nullable=False),
+            sa.Column("file_name", sa.String(length=255), nullable=True),
+            sa.Column("file_url", sa.String(length=500), nullable=True),
+            sa.Column("mime_type", sa.String(length=120), nullable=True),
+            sa.Column("size_bytes", sa.Integer(), nullable=True),
+            sa.ForeignKeyConstraint(["message_id"], ["messages.id"]),
+        )
+    _create_index_if_missing("ix_attachments_message_id", "attachments", ["message_id"])
 
 
 def downgrade() -> None:
