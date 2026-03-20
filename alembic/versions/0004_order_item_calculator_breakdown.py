@@ -17,9 +17,18 @@ branch_labels = None
 depends_on = None
 
 
+def _column_exists(table_name: str, column_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    if table_name not in inspector.get_table_names():
+        return False
+    return any(column["name"] == column_name for column in inspector.get_columns(table_name))
+
+
 def upgrade() -> None:
-    op.add_column("order_items", sa.Column("calculator_breakdown", sa.JSON(), nullable=True))
+    if not _column_exists("order_items", "calculator_breakdown"):
+        op.add_column("order_items", sa.Column("calculator_breakdown", sa.JSON(), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("order_items", "calculator_breakdown")
+    if _column_exists("order_items", "calculator_breakdown"):
+        op.drop_column("order_items", "calculator_breakdown")
