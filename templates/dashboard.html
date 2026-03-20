@@ -57,59 +57,15 @@
 
 <div class="row g-3 mb-4">
     <div class="col-12 col-xl-8">
-        <div class="card border-0 shadow-sm service-calculator-card">
-            <div class="card-body p-3 p-md-4">
-                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-                    <h5 class="mb-0 fw-semibold">
-                        <i class="bi bi-calculator me-2 text-primary"></i>Калькулятор услуги
-                    </h5>
-                    <small class="text-muted">Схема и расчет из каталога V2</small>
+        <div class="card border-0 shadow-sm calc-jump-card h-100">
+            <div class="card-body p-3 p-md-4 d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <div>
+                    <h5 class="mb-1 fw-semibold"><i class="bi bi-calculator me-2 text-primary"></i>Калькулятор заявок</h5>
+                    <div class="text-muted">Быстрый расчет по прайсу точки + создание заявки в один клик.</div>
                 </div>
-
-                <form id="service-calculator-form" class="row g-3" autocomplete="off">
-                    <div class="col-12 col-md-6">
-                        <label for="calculator-point" class="form-label">Точка</label>
-                        <select id="calculator-point" class="form-select" required>
-                            <option value="">Выберите точку...</option>
-                        </select>
-                        <div class="form-text">Сначала выберите точку, чтобы увидеть ее прайс.</div>
-                    </div>
-
-                    <div class="col-12 col-md-6">
-                        <label for="calculator-service" class="form-label">Услуга</label>
-                        <select id="calculator-service" class="form-select" required>
-                            <option value="">Выберите услугу...</option>
-                        </select>
-                    </div>
-
-                    <div class="col-12" id="calculator-fields"></div>
-
-                    <div class="col-12 col-md-6">
-                        <label for="calculator-client-name" class="form-label">Клиент</label>
-                        <input id="calculator-client-name" type="text" class="form-control" placeholder="Имя клиента" required>
-                    </div>
-
-                    <div class="col-12 col-md-6">
-                        <label for="calculator-client-phone" class="form-label">Телефон</label>
-                        <input id="calculator-client-phone" type="text" class="form-control" placeholder="+7 ...">
-                    </div>
-
-                    <div class="col-12 d-flex flex-wrap align-items-center gap-2">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-lightning-charge me-1"></i>Рассчитать
-                        </button>
-                        <button type="button" id="calculator-create-order" class="btn btn-success" disabled>
-                            <i class="bi bi-send-check me-1"></i>Создать заявку
-                        </button>
-                        <span id="calculator-status" class="small text-muted"></span>
-                    </div>
-
-                    <div class="col-12">
-                        <div class="calculator-result" id="calculator-result">
-                            <span class="text-muted">Выберите услугу и параметры для расчета.</span>
-                        </div>
-                    </div>
-                </form>
+                <a href="/calculator" class="btn btn-primary btn-lg">
+                    <i class="bi bi-arrow-right-circle me-1"></i>Открыть калькулятор
+                </a>
             </div>
         </div>
     </div>

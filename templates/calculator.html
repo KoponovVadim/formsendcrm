@@ -1,0 +1,85 @@
+{% extends "layout.html" %}
+{% block title %}Калькулятор{% endblock %}
+{% block content %}
+<div class="calc-page">
+    <div class="calc-hero mb-4">
+        <div class="calc-hero-pattern"></div>
+        <div class="calc-hero-content">
+            <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+                <div>
+                    <h4 class="fw-bold mb-2"><i class="bi bi-calculator me-2"></i>Калькулятор заявок</h4>
+                    <p class="mb-0 text-secondary">Выберите точку, услугу и параметры. После расчета можно сразу создать заявку.</p>
+                </div>
+                <a class="btn btn-outline-dark" href="/modules/orders/new">
+                    <i class="bi bi-plus-circle me-1"></i>Новый заказ вручную
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 g-xl-4 align-items-stretch">
+        <div class="col-12 col-xl-8">
+            <div class="card border-0 shadow-sm calc-form-card h-100">
+                <div class="card-body p-3 p-md-4">
+                    <form id="service-calculator-form" class="row g-3" autocomplete="off">
+                        <div class="col-12 col-md-6">
+                            <label for="calculator-point" class="form-label">Точка ремонта</label>
+                            <select id="calculator-point" class="form-select form-select-lg" required>
+                                <option value="">Выберите точку...</option>
+                            </select>
+                            <div class="form-text">Список формируется из прайсов точек.</div>
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <label for="calculator-service" class="form-label">Услуга</label>
+                            <select id="calculator-service" class="form-select form-select-lg" required>
+                                <option value="">Выберите услугу...</option>
+                            </select>
+                            <div class="form-text">Показываются только услуги выбранной точки.</div>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="calc-fields-shell" id="calculator-fields"></div>
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <label for="calculator-client-name" class="form-label">Имя клиента</label>
+                            <input id="calculator-client-name" type="text" class="form-control" placeholder="Например: Иван" required>
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <label for="calculator-client-phone" class="form-label">Телефон клиента</label>
+                            <input id="calculator-client-phone" type="text" class="form-control" placeholder="+7 (___) ___-__-__">
+                        </div>
+
+                        <div class="col-12 d-flex flex-wrap align-items-center gap-2">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="bi bi-lightning-charge me-1"></i>Рассчитать
+                            </button>
+                            <button type="button" id="calculator-create-order" class="btn btn-success btn-lg" disabled>
+                                <i class="bi bi-send-check me-1"></i>Создать заявку
+                            </button>
+                            <span id="calculator-status" class="small text-muted"></span>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-xl-4">
+            <div class="card border-0 shadow-sm calc-result-card h-100">
+                <div class="card-body p-3 p-md-4 d-flex flex-column">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h6 class="mb-0 fw-semibold"><i class="bi bi-receipt me-1"></i>Результат</h6>
+                        <span class="badge text-bg-light border">Онлайн</span>
+                    </div>
+                    <div class="calculator-result calc-result-panel flex-grow-1" id="calculator-result">
+                        <span class="text-muted">Выберите услугу и параметры для расчета.</span>
+                    </div>
+                    <div class="small text-muted mt-2">Сумма берется из каталога услуг и прайса выбранной точки.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

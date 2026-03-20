@@ -70,6 +70,71 @@
     background: linear-gradient(135deg, #ffffff 0%, #edf4ff 100%);
 }
 
+.calc-jump-card {
+    background: linear-gradient(135deg, #ffffff 0%, #e6f4f1 100%);
+}
+
+.calc-page {
+    max-width: 1220px;
+    margin: 0 auto;
+}
+
+.calc-hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: 1rem;
+    background: linear-gradient(120deg, #fffdf7 0%, #e9f3ff 55%, #f2faf4 100%);
+    border: 1px solid #dbeafe;
+}
+
+.calc-hero-pattern {
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(circle at 20% 20%, rgba(59, 130, 246, 0.16) 0, rgba(59, 130, 246, 0) 45%),
+        radial-gradient(circle at 75% 30%, rgba(16, 185, 129, 0.13) 0, rgba(16, 185, 129, 0) 42%);
+    pointer-events: none;
+}
+
+.calc-hero-content {
+    position: relative;
+    padding: 1.15rem 1.25rem;
+}
+
+.calc-form-card {
+    background: linear-gradient(140deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.calc-fields-shell {
+    border: 1px solid #dbe4f2;
+    border-radius: 0.85rem;
+    background: #ffffff;
+    padding: 0.8rem;
+    min-height: 78px;
+}
+
+.calc-result-card {
+    background: linear-gradient(145deg, #0f172a 0%, #1f2a44 100%);
+    color: #e2e8f0;
+}
+
+.calc-result-card .text-muted {
+    color: #94a3b8 !important;
+}
+
+.calc-result-panel {
+    border-color: rgba(148, 163, 184, 0.35);
+    background: rgba(15, 23, 42, 0.45);
+}
+
+.calc-result-panel .display-6 {
+    color: #f8fafc;
+    line-height: 1.1;
+}
+
+.calc-result-card .calculator-breakdown {
+    color: #cbd5e1;
+}
+
 .calculator-result {
     border: 1px dashed #cbd5e1;
     border-radius: 0.75rem;
@@ -205,6 +270,14 @@
 
     #page-content-wrapper {
         margin-left: 0;
+    }
+
+    .calc-hero-content {
+        padding: 0.9rem 1rem;
+    }
+
+    .calc-result-card {
+        min-height: 280px;
     }
 
     /* Table -> card transform handled via d-none d-md-block classes in template */

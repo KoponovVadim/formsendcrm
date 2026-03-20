@@ -108,3 +108,19 @@ async def dashboard(
         "modules": modules,
         "module_stats": module_stats,
     })
+
+
+@app.get("/calculator", response_class=HTMLResponse)
+async def calculator_page(
+    request: Request,
+    user=Depends(get_current_user),
+    db=Depends(get_db),
+):
+    modules = await get_all_modules(db)
+    modules = filter_visible_modules_for_user(modules, user)
+
+    return templates.TemplateResponse("calculator.html", {
+        "request": request,
+        "user": user,
+        "modules": modules,
+    })
