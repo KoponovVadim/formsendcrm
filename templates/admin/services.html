@@ -98,6 +98,49 @@
             </div>
         </div>
     </div>
+
+    <div class="col-12">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                    <h5 class="mb-0">Точки и их прайс-листы</h5>
+                    <div class="d-flex gap-2 align-items-center">
+                        <select id="point-manager-select" class="form-select form-select-sm" style="min-width: 240px;">
+                            <option value="">Выберите точку...</option>
+                        </select>
+                        <input id="point-manager-new" class="form-control form-control-sm" placeholder="Новая точка" style="width: 220px;">
+                        <button id="point-manager-add" class="btn btn-sm btn-outline-primary">Добавить точку</button>
+                        <button id="point-manager-delete" class="btn btn-sm btn-outline-danger">Удалить точку</button>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0" id="point-prices-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Услуга</th>
+                                <th>Категория</th>
+                                <th>База</th>
+                                <th>Цена точки</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="4" class="text-muted">Выберите точку для редактирования прайса.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="mt-3 d-flex gap-2 align-items-center">
+                    <button id="point-prices-save" class="btn btn-sm btn-success" disabled>
+                        <i class="bi bi-save me-1"></i>Сохранить прайс точки
+                    </button>
+                    <span id="point-manager-status" class="small text-muted"></span>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -114,6 +157,13 @@
     const form = document.getElementById('service-editor-form');
     const validateBtn = document.getElementById('service-validate');
     const templateSimpleBtn = document.getElementById('service-template-simple');
+    const pointSelect = document.getElementById('point-manager-select');
+    const pointNewInput = document.getElementById('point-manager-new');
+    const pointAddBtn = document.getElementById('point-manager-add');
+    const pointDeleteBtn = document.getElementById('point-manager-delete');
+    const pointPricesTableBody = document.querySelector('#point-prices-table tbody');
+    const pointPricesSaveBtn = document.getElementById('point-prices-save');
+    const pointStatusEl = document.getElementById('point-manager-status');
 
     const idInput = document.getElementById('service-id');
     const slugInput = document.getElementById('service-slug');
@@ -152,6 +202,11 @@
     function setEditorStatus(text, isError) {
         editorStatusEl.textContent = text || '';
         editorStatusEl.className = isError ? 'small text-danger mt-2' : 'small text-success mt-2';
+    }
+
+    function setPointStatus(text, isError) {
+        pointStatusEl.textContent = text || '';
+        pointStatusEl.className = isError ? 'small text-danger' : 'small text-muted';
     }
 
     function formatMoney(value) {
@@ -224,6 +279,182 @@
                 fillForm(selected);
             });
         });
+    }
+
+    function renderPointRows(pointPrices) {
+        if (!Array.isArray(pointPrices) || !pointPrices.length) {
+            pointPricesTableBody.innerHTML = '<tr><td colspan="4" class="text-muted">Нет услуг для редактирования.</td></tr>';
+            pointPricesSaveBtn.disabled = true;
+            return;
+        }
+
+        pointPricesTableBody.innerHTML = pointPrices.map(function (item) {
+            return `
+                <tr>
+                    <td>${item.name || ''}</td>
+                    <td>${item.category || ''}</td>
+                    <td>${formatMoney(item.base_price)} RUB</td>
+                    <td style="max-width: 220px;">
+                        <input
+                            type="number"
+                            step="0.01"
+                            class="form-control form-control-sm point-price-input"
+                            data-service-id="${item.service_id}"
+                            value="${Number(item.price || 0)}"
+                        >
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        pointPricesSaveBtn.disabled = false;
+    }
+
+    function renderPoints(points) {
+        const previous = pointSelect.value;
+        pointSelect.innerHTML = '<option value="">Выберите точку...</option>';
+
+        (points || []).forEach(function (point) {
+            const option = document.createElement('option');
+            option.value = point;
+            option.textContent = point;
+            pointSelect.appendChild(option);
+        });
+
+        if (previous && (points || []).includes(previous)) {
+            pointSelect.value = previous;
+        }
+    }
+
+    async function loadPoints() {
+        try {
+            const response = await fetch('/api/v1/catalog/points');
+            if (!response.ok) {
+                throw new Error('points_load_failed');
+            }
+            const points = await response.json();
+            renderPoints(points);
+        } catch (_err) {
+            setPointStatus('Не удалось загрузить список точек.', true);
+        }
+    }
+
+    async function loadPointPrices(pointName) {
+        if (!pointName) {
+            pointPricesTableBody.innerHTML = '<tr><td colspan="4" class="text-muted">Выберите точку для редактирования прайса.</td></tr>';
+            pointPricesSaveBtn.disabled = true;
+            return;
+        }
+
+        setPointStatus('Загрузка прайса точки...', false);
+        try {
+            const response = await fetch(`/api/v1/catalog/points/${encodeURIComponent(pointName)}/prices`);
+            if (!response.ok) {
+                throw new Error('point_prices_load_failed');
+            }
+            const data = await response.json();
+            renderPointRows(data.prices || []);
+            setPointStatus(`Загружено позиций: ${(data.prices || []).length}.`, false);
+        } catch (_err) {
+            pointPricesTableBody.innerHTML = '<tr><td colspan="4" class="text-danger">Не удалось загрузить прайс точки.</td></tr>';
+            pointPricesSaveBtn.disabled = true;
+            setPointStatus('Не удалось загрузить прайс точки.', true);
+        }
+    }
+
+    async function savePointPrices() {
+        const pointName = (pointSelect.value || '').trim();
+        if (!pointName) {
+            setPointStatus('Сначала выберите точку.', true);
+            return;
+        }
+
+        const prices = [];
+        pointPricesTableBody.querySelectorAll('.point-price-input').forEach(function (input) {
+            prices.push({
+                service_id: Number(input.dataset.serviceId || 0),
+                price: Number(input.value || 0),
+            });
+        });
+
+        setPointStatus('Сохраняем прайс точки...', false);
+        pointPricesSaveBtn.disabled = true;
+
+        try {
+            const response = await fetch(`/api/v1/catalog/points/${encodeURIComponent(pointName)}/prices`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prices }),
+            });
+            if (!response.ok) {
+                throw new Error('point_prices_save_failed');
+            }
+            setPointStatus('Прайс точки сохранен.', false);
+            await loadServices();
+            await loadPointPrices(pointName);
+        } catch (_err) {
+            setPointStatus('Не удалось сохранить прайс точки.', true);
+            pointPricesSaveBtn.disabled = false;
+        }
+    }
+
+    async function addPoint() {
+        const name = (pointNewInput.value || '').trim();
+        if (!name) {
+            setPointStatus('Введите название новой точки.', true);
+            return;
+        }
+
+        setPointStatus('Добавляем точку...', false);
+
+        try {
+            const response = await fetch('/api/v1/catalog/points', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name }),
+            });
+            if (!response.ok) {
+                throw new Error('point_add_failed');
+            }
+
+            pointNewInput.value = '';
+            await loadPoints();
+            pointSelect.value = name;
+            await loadPointPrices(name);
+            setPointStatus('Точка добавлена.', false);
+        } catch (_err) {
+            setPointStatus('Не удалось добавить точку.', true);
+        }
+    }
+
+    async function deletePoint() {
+        const pointName = (pointSelect.value || '').trim();
+        if (!pointName) {
+            setPointStatus('Выберите точку для удаления.', true);
+            return;
+        }
+
+        if (!window.confirm(`Удалить точку "${pointName}" из прайсов всех услуг?`)) {
+            return;
+        }
+
+        setPointStatus('Удаляем точку...', false);
+
+        try {
+            const response = await fetch(`/api/v1/catalog/points/${encodeURIComponent(pointName)}`, {
+                method: 'DELETE',
+            });
+            if (!response.ok) {
+                throw new Error('point_delete_failed');
+            }
+
+            await loadPoints();
+            await loadServices();
+            await loadPointPrices('');
+            setPointStatus('Точка удалена.', false);
+        } catch (_err) {
+            setPointStatus('Не удалось удалить точку.', true);
+        }
     }
 
     async function loadServices() {
@@ -323,8 +554,16 @@
         setEditorStatus('Подставлен упрощенный шаблон для менеджера.', false);
     });
 
+    pointSelect.addEventListener('change', function () {
+        loadPointPrices((pointSelect.value || '').trim());
+    });
+    pointPricesSaveBtn.addEventListener('click', savePointPrices);
+    pointAddBtn.addEventListener('click', addPoint);
+    pointDeleteBtn.addEventListener('click', deletePoint);
+
     resetForm();
     loadServices();
+    loadPoints();
 })();
 </script>
 {% endblock %}

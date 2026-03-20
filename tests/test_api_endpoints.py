@@ -253,6 +253,101 @@ async def test_catalog_calculate_applies_commission_for_non_manage(async_client,
     assert data["breakdown"] == []
 
 
+async def test_catalog_points_crud_and_point_prices_update(async_client, db_session):
+    service_a = Service(
+        slug="phone-a",
+        name="Phone A",
+        category="repair",
+        is_active=True,
+        base_price=100,
+        calculator_schema={"fields": []},
+    )
+    service_b = Service(
+        slug="phone-b",
+        name="Phone B",
+        category="repair",
+        is_active=True,
+        base_price=250,
+        calculator_schema={"fields": []},
+    )
+    db_session.add_all([service_a, service_b])
+    await db_session.commit()
+
+    create_point_response = await async_client.post("/api/v1/catalog/points", json={"name": "Point 1"})
+    assert create_point_response.status_code == 200
+    assert create_point_response.json()["point"] == "Point 1"
+
+    list_points_response = await async_client.get("/api/v1/catalog/points")
+    assert list_points_response.status_code == 200
+    assert list_points_response.json() == ["Point 1"]
+
+    get_prices_response = await async_client.get("/api/v1/catalog/points/Point%201/prices")
+    assert get_prices_response.status_code == 200
+    prices_payload = get_prices_response.json()
+    assert prices_payload["point"] == "Point 1"
+    assert len(prices_payload["prices"]) == 2
+    by_slug = {item["slug"]: item for item in prices_payload["prices"]}
+    assert by_slug["phone-a"]["price"] == 100
+    assert by_slug["phone-b"]["price"] == 250
+
+    update_prices_response = await async_client.put(
+        "/api/v1/catalog/points/Point%201/prices",
+        json={
+            "prices": [
+                {"service_id": service_a.id, "price": 130},
+                {"service_id": service_b.id, "price": 270},
+            ]
+        },
+    )
+    assert update_prices_response.status_code == 200
+    assert update_prices_response.json()["updated"] == 2
+
+    calculate_for_point_response = await async_client.post(
+        f"/api/v1/catalog/services/{service_a.id}/calculate",
+        json={"point": "Point 1"},
+    )
+    assert calculate_for_point_response.status_code == 200
+    assert calculate_for_point_response.json()["total"] == 130
+
+    delete_point_response = await async_client.delete("/api/v1/catalog/points/Point%201")
+    assert delete_point_response.status_code == 200
+    assert delete_point_response.json()["ok"] is True
+
+    list_after_delete_response = await async_client.get("/api/v1/catalog/points")
+    assert list_after_delete_response.status_code == 200
+    assert list_after_delete_response.json() == []
+
+
+async def test_catalog_points_endpoints_denied_without_manage_access(async_client, api_app):
+    async def _deny_user():
+        return SimpleNamespace(
+            id=6,
+            is_superuser=False,
+            role=SimpleNamespace(permissions={"v2": {"services": {"manage": False}}}),
+        )
+
+    api_app.dependency_overrides[get_current_user] = _deny_user
+
+    list_response = await async_client.get("/api/v1/catalog/points")
+    assert list_response.status_code == 403
+    assert list_response.json()["detail"] == "services_manage_access_denied"
+
+    create_response = await async_client.post("/api/v1/catalog/points", json={"name": "Point denied"})
+    assert create_response.status_code == 403
+
+    prices_response = await async_client.get("/api/v1/catalog/points/Point%20denied/prices")
+    assert prices_response.status_code == 403
+
+    update_response = await async_client.put(
+        "/api/v1/catalog/points/Point%20denied/prices",
+        json={"prices": []},
+    )
+    assert update_response.status_code == 403
+
+    delete_response = await async_client.delete("/api/v1/catalog/points/Point%20denied")
+    assert delete_response.status_code == 403
+
+
 async def test_orders_create_then_get_includes_calculator_breakdown(async_client, db_session):
     service = Service(
         slug="screen-repair-api",
