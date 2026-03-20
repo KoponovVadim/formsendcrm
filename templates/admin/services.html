@@ -1,0 +1,305 @@
+{% extends "layout.html" %}
+{% block title %}Услуги и цены{% endblock %}
+{% block content %}
+<h4 class="fw-bold mb-4"><i class="bi bi-currency-exchange me-2"></i>Управление услугами и ценами</h4>
+
+<div class="row g-3">
+    <div class="col-12 col-xl-7">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                    <h5 class="mb-0">Каталог услуг</h5>
+                    <div class="d-flex gap-2 align-items-center">
+                        <input id="services-query" type="search" class="form-control form-control-sm" placeholder="Поиск по имени или slug" style="width: 240px;">
+                        <div class="form-check m-0">
+                            <input class="form-check-input" type="checkbox" id="services-include-inactive" checked>
+                            <label class="form-check-label small" for="services-include-inactive">Показывать отключенные</label>
+                        </div>
+                        <button id="services-reload" class="btn btn-sm btn-outline-secondary">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0" id="services-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th>ID</th>
+                                <th>Slug</th>
+                                <th>Название</th>
+                                <th>Категория</th>
+                                <th>База</th>
+                                <th>Статус</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="6" class="text-muted">Загрузка...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="services-status" class="small text-muted mt-2"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-xl-5">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0" id="service-editor-title">Новая услуга</h5>
+                    <button id="service-new" class="btn btn-sm btn-outline-primary">Новая</button>
+                </div>
+
+                <form id="service-editor-form" class="row g-3" autocomplete="off">
+                    <input type="hidden" id="service-id">
+                    <div class="col-12 col-md-6">
+                        <label class="form-label">Slug</label>
+                        <input id="service-slug" class="form-control" required maxlength="150">
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label">Категория</label>
+                        <input id="service-category" class="form-control" value="repair" maxlength="30">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Название</label>
+                        <input id="service-name" class="form-control" required maxlength="255">
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label">Базовая цена</label>
+                        <input id="service-base-price" type="number" step="0.01" class="form-control" required>
+                    </div>
+                    <div class="col-12 col-md-6 d-flex align-items-end">
+                        <div class="form-check">
+                            <input id="service-is-active" class="form-check-input" type="checkbox" checked>
+                            <label class="form-check-label" for="service-is-active">Активна</label>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Схема калькулятора (JSON)</label>
+                        <textarea id="service-schema" class="form-control" rows="14" spellcheck="false">{
+  "currency": "RUB",
+  "round_to": 2,
+  "fields": []
+}</textarea>
+                        <div class="form-text">Поддерживается формат, используемый API `POST /api/v1/catalog/services/{id}/calculate`.</div>
+                    </div>
+                    <div class="col-12 d-flex flex-wrap gap-2">
+                        <button type="submit" class="btn btn-primary" id="service-save">
+                            <i class="bi bi-save me-1"></i>Сохранить
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" id="service-validate">Проверить JSON</button>
+                    </div>
+                </form>
+                <div id="service-editor-status" class="small text-muted mt-2"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const tableBody = document.querySelector('#services-table tbody');
+    const statusEl = document.getElementById('services-status');
+    const editorStatusEl = document.getElementById('service-editor-status');
+    const queryInput = document.getElementById('services-query');
+    const includeInactiveInput = document.getElementById('services-include-inactive');
+    const reloadBtn = document.getElementById('services-reload');
+    const newBtn = document.getElementById('service-new');
+    const form = document.getElementById('service-editor-form');
+    const validateBtn = document.getElementById('service-validate');
+
+    const idInput = document.getElementById('service-id');
+    const slugInput = document.getElementById('service-slug');
+    const nameInput = document.getElementById('service-name');
+    const categoryInput = document.getElementById('service-category');
+    const basePriceInput = document.getElementById('service-base-price');
+    const isActiveInput = document.getElementById('service-is-active');
+    const schemaInput = document.getElementById('service-schema');
+    const editorTitle = document.getElementById('service-editor-title');
+
+    let services = [];
+
+    function setStatus(text, isError) {
+        statusEl.textContent = text || '';
+        statusEl.className = isError ? 'small text-danger mt-2' : 'small text-muted mt-2';
+    }
+
+    function setEditorStatus(text, isError) {
+        editorStatusEl.textContent = text || '';
+        editorStatusEl.className = isError ? 'small text-danger mt-2' : 'small text-success mt-2';
+    }
+
+    function formatMoney(value) {
+        const num = Number(value || 0);
+        return new Intl.NumberFormat('ru-RU').format(num);
+    }
+
+    function parseSchemaOrThrow() {
+        try {
+            const parsed = JSON.parse(schemaInput.value || '{}');
+            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                throw new Error('schema_not_object');
+            }
+            return parsed;
+        } catch (_err) {
+            throw new Error('invalid_json');
+        }
+    }
+
+    function resetForm() {
+        idInput.value = '';
+        slugInput.value = '';
+        nameInput.value = '';
+        categoryInput.value = 'repair';
+        basePriceInput.value = '0';
+        isActiveInput.checked = true;
+        schemaInput.value = JSON.stringify({ currency: 'RUB', round_to: 2, fields: [] }, null, 2);
+        editorTitle.textContent = 'Новая услуга';
+        setEditorStatus('', false);
+    }
+
+    function fillForm(service) {
+        idInput.value = String(service.id || '');
+        slugInput.value = service.slug || '';
+        nameInput.value = service.name || '';
+        categoryInput.value = service.category || 'repair';
+        basePriceInput.value = Number(service.base_price || 0);
+        isActiveInput.checked = Boolean(service.is_active);
+        schemaInput.value = JSON.stringify(service.calculator_schema || {}, null, 2);
+        editorTitle.textContent = `Редактирование #${service.id}`;
+        setEditorStatus('', false);
+    }
+
+    function renderRows() {
+        if (!services.length) {
+            tableBody.innerHTML = '<tr><td colspan="6" class="text-muted">Нет услуг по текущему фильтру.</td></tr>';
+            return;
+        }
+
+        tableBody.innerHTML = services.map(function (service) {
+            const activeClass = service.is_active ? 'bg-success' : 'bg-secondary';
+            const activeLabel = service.is_active ? 'Активна' : 'Отключена';
+            return `
+                <tr class="service-row" data-id="${service.id}">
+                    <td>${service.id}</td>
+                    <td><code>${service.slug}</code></td>
+                    <td>${service.name || ''}</td>
+                    <td>${service.category || ''}</td>
+                    <td>${formatMoney(service.base_price)} RUB</td>
+                    <td><span class="badge ${activeClass}">${activeLabel}</span></td>
+                </tr>
+            `;
+        }).join('');
+
+        tableBody.querySelectorAll('.service-row').forEach(function (row) {
+            row.addEventListener('click', function () {
+                const id = Number(row.dataset.id || 0);
+                const selected = services.find(function (s) { return Number(s.id) === id; });
+                if (!selected) return;
+                fillForm(selected);
+            });
+        });
+    }
+
+    async function loadServices() {
+        const q = encodeURIComponent(queryInput.value || '');
+        const includeInactive = includeInactiveInput.checked ? 'true' : 'false';
+        setStatus('Загрузка каталога...', false);
+
+        try {
+            const response = await fetch(`/api/v1/catalog/services?q=${q}&include_inactive=${includeInactive}`);
+            if (!response.ok) {
+                throw new Error('load_failed');
+            }
+            services = await response.json();
+            renderRows();
+            setStatus(`Загружено услуг: ${services.length}.`, false);
+        } catch (_err) {
+            services = [];
+            renderRows();
+            setStatus('Не удалось загрузить услуги.', true);
+        }
+    }
+
+    async function saveService(event) {
+        event.preventDefault();
+
+        let schema;
+        try {
+            schema = parseSchemaOrThrow();
+        } catch (_err) {
+            setEditorStatus('Ошибка JSON: проверьте формат схемы.', true);
+            return;
+        }
+
+        const payload = {
+            slug: slugInput.value.trim(),
+            name: nameInput.value.trim(),
+            category: categoryInput.value.trim() || 'repair',
+            base_price: Number(basePriceInput.value || 0),
+            is_active: Boolean(isActiveInput.checked),
+            calculator_schema: schema,
+        };
+
+        if (!payload.slug || !payload.name) {
+            setEditorStatus('Slug и название обязательны.', true);
+            return;
+        }
+
+        const id = Number(idInput.value || 0);
+        const isUpdate = id > 0;
+        const url = isUpdate ? `/api/v1/catalog/services/${id}` : '/api/v1/catalog/services';
+        const method = isUpdate ? 'PATCH' : 'POST';
+
+        try {
+            const response = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+                const data = await response.json().catch(function () { return {}; });
+                throw new Error(data.detail || 'save_failed');
+            }
+
+            setEditorStatus(isUpdate ? 'Услуга обновлена.' : 'Услуга создана.', false);
+            await loadServices();
+
+            if (!isUpdate) {
+                resetForm();
+            }
+        } catch (err) {
+            setEditorStatus(`Не удалось сохранить: ${String(err.message || err)}`, true);
+        }
+    }
+
+    queryInput.addEventListener('input', function () {
+        window.clearTimeout(queryInput._timer);
+        queryInput._timer = window.setTimeout(loadServices, 350);
+    });
+    includeInactiveInput.addEventListener('change', loadServices);
+    reloadBtn.addEventListener('click', loadServices);
+    newBtn.addEventListener('click', resetForm);
+    form.addEventListener('submit', saveService);
+
+    validateBtn.addEventListener('click', function () {
+        try {
+            const parsed = parseSchemaOrThrow();
+            schemaInput.value = JSON.stringify(parsed, null, 2);
+            setEditorStatus('JSON корректен.', false);
+        } catch (_err) {
+            setEditorStatus('Ошибка JSON: проверьте формат схемы.', true);
+        }
+    });
+
+    resetForm();
+    loadServices();
+})();
+</script>
+{% endblock %}

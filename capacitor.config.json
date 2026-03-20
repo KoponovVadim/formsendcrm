@@ -1,0 +1,21 @@
+{
+  "appId": "com.formsendcrm.app",
+  "appName": "FormSendCRM",
+  "webDir": "static",
+  "server": {
+    "url": "http://localhost:8000",
+    "cleartext": true,
+    "allowNavigation": [
+      "*"
+    ]
+  },
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
+    }
+  }
+}

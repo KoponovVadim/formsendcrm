@@ -1,0 +1,69 @@
+{% extends "layout.html" %}
+{% block title %}{{ module.display_name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <h4 class="fw-bold mb-0">
+        <i class="bi {{ module.icon }} me-2"></i>{{ module.display_name }}
+        <span class="badge bg-secondary rounded-pill fs-6">{{ total }}</span>
+    </h4>
+    <div class="d-flex gap-2">
+        {% if user.is_superuser %}
+        <button class="btn btn-outline-primary btn-sm"
+                hx-post="/admin/sync/pull/{{ module.slug }}"
+                hx-target="#sync-msg" hx-swap="innerHTML">
+            <i class="bi bi-cloud-download me-1"></i>Синхр.
+        </button>
+        {% endif %}
+        <button class="btn btn-success btn-sm"
+                hx-get="/modules/{{ module.slug }}/new"
+                hx-target="#modal-container" hx-swap="innerHTML"
+                data-bs-toggle="modal" data-bs-target="#recordModal">
+            <i class="bi bi-plus-lg me-1"></i>Добавить
+        </button>
+    </div>
+</div>
+
+<div id="sync-msg" class="mb-2"></div>
+
+<!-- Search + sort -->
+<div class="row g-2 mb-3">
+    <div class="col-12 col-lg-8">
+        <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="search" class="form-control" placeholder="Поиск..."
+                   name="search" value="{{ search }}"
+                   hx-get="/modules/{{ module.slug }}"
+                   hx-trigger="keyup changed delay:300ms"
+                   hx-target="#records-container"
+                   hx-swap="innerHTML"
+                   hx-include="[name='search'], [name='sort']">
+        </div>
+    </div>
+    <div class="col-12 col-lg-4">
+        <select class="form-select" name="sort"
+                hx-get="/modules/{{ module.slug }}"
+                hx-trigger="change"
+                hx-target="#records-container"
+                hx-swap="innerHTML"
+                hx-include="[name='search'], [name='sort']">
+            <option value="newest" {% if sort == 'newest' %}selected{% endif %}>Сначала новые</option>
+            <option value="oldest" {% if sort == 'oldest' %}selected{% endif %}>Сначала старые</option>
+            <option value="updated_desc" {% if sort == 'updated_desc' %}selected{% endif %}>Недавно измененные</option>
+            <option value="updated_asc" {% if sort == 'updated_asc' %}selected{% endif %}>Давно измененные</option>
+        </select>
+    </div>
+</div>
+
+<div id="records-container">
+    {% include "partials/module_table.html" %}
+</div>
+
+<!-- Edit Modal -->
+<div class="modal fade" id="recordModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content" id="modal-container">
+            <!-- Content loaded via HTMX -->
+        </div>
+    </div>
+</div>
+{% endblock %}
