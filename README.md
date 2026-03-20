@@ -227,6 +227,24 @@ Local Database (PostgreSQL)
 - Для `boolean` поле `price` трактуется как `true_price`.
 - Для `select` объект `choices` автоматически преобразуется в список `options`.
 
+Прайс по точкам:
+- В `calculator_schema` можно указать `point_prices` с ценой услуги для каждой точки.
+- Если в payload расчета передать `__point` (или `point`), базовая цена берется из `point_prices`.
+
+Пример:
+
+```json
+{
+     "point_prices": {
+          "Точка А": 1500,
+          "Точка Б": 2300
+     },
+     "fields": [
+          {"name": "hours", "type": "number", "coefficient": 100}
+     ]
+}
+```
+
 ## Миграции Alembic
 
 В проект добавлен Alembic для управляемых миграций базы данных.

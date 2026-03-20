@@ -69,7 +69,15 @@ document.addEventListener('DOMContentLoaded', function () {
             emptyOpt.textContent = 'Выберите...';
             input.appendChild(emptyOpt);
 
-            (field.options || []).forEach(function (opt) {
+            let options = Array.isArray(field.options) ? field.options : [];
+
+            if (!options.length && field.choices && typeof field.choices === 'object' && !Array.isArray(field.choices)) {
+                options = Object.entries(field.choices).map(function (entry) {
+                    return { value: String(entry[0]), label: String(entry[0]), price: Number(entry[1] || 0) };
+                });
+            }
+
+            options.forEach(function (opt) {
                 if (!opt || typeof opt !== 'object') return;
                 const option = document.createElement('option');
                 option.value = String(opt.value ?? opt.name ?? '');
@@ -99,16 +107,23 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function initServiceCalculator() {
         const form = document.getElementById('service-calculator-form');
+        const pointSelect = document.getElementById('calculator-point');
         const serviceSelect = document.getElementById('calculator-service');
+        const clientNameInput = document.getElementById('calculator-client-name');
+        const clientPhoneInput = document.getElementById('calculator-client-phone');
+        const createOrderBtn = document.getElementById('calculator-create-order');
         const fieldsContainer = document.getElementById('calculator-fields');
         const statusEl = document.getElementById('calculator-status');
         const resultEl = document.getElementById('calculator-result');
-        if (!form || !serviceSelect || !fieldsContainer || !statusEl || !resultEl) {
+        if (!form || !serviceSelect || !pointSelect || !fieldsContainer || !statusEl || !resultEl || !createOrderBtn) {
             return;
         }
 
         let services = [];
+        let filteredServices = [];
+        let points = [];
         let selectedSchema = {};
+        let lastCalculation = null;
 
         function setStatus(text, isError) {
             statusEl.textContent = text || '';
@@ -169,6 +184,70 @@ document.addEventListener('DOMContentLoaded', function () {
             `;
         }
 
+        function _readPointPrices(schema) {
+            const map = (schema || {}).point_prices;
+            if (map && typeof map === 'object' && !Array.isArray(map)) {
+                return map;
+            }
+            return {};
+        }
+
+        function renderPoints() {
+            const pointSet = new Set();
+            services.forEach(function (service) {
+                const map = _readPointPrices(service.calculator_schema || {});
+                Object.keys(map).forEach(function (key) {
+                    if (String(key || '').trim()) {
+                        pointSet.add(String(key).trim());
+                    }
+                });
+            });
+
+            points = Array.from(pointSet).sort(function (a, b) { return a.localeCompare(b, 'ru'); });
+            pointSelect.innerHTML = '<option value="">Выберите точку...</option>';
+
+            points.forEach(function (point) {
+                const option = document.createElement('option');
+                option.value = point;
+                option.textContent = point;
+                pointSelect.appendChild(option);
+            });
+        }
+
+        function renderServicesForPoint() {
+            const selectedPoint = String(pointSelect.value || '').trim();
+            filteredServices = selectedPoint
+                ? services.filter(function (service) {
+                    const map = _readPointPrices(service.calculator_schema || {});
+                    return Object.prototype.hasOwnProperty.call(map, selectedPoint);
+                })
+                : [];
+
+            serviceSelect.innerHTML = '<option value="">Выберите услугу...</option>';
+            filteredServices.forEach(function (service) {
+                const option = document.createElement('option');
+                const pointPrice = _readPointPrices(service.calculator_schema || {})[selectedPoint];
+                const priceSuffix = selectedPoint && pointPrice !== undefined ? ` - ${formatMoney(pointPrice)} RUB` : '';
+                option.value = String(service.id);
+                option.textContent = `${service.name}${priceSuffix}`;
+                serviceSelect.appendChild(option);
+            });
+
+            if (selectedPoint && !filteredServices.length) {
+                setStatus('Для этой точки нет услуг в прайсе.', true);
+            } else if (selectedPoint) {
+                setStatus(`Прайс точки загружен: ${filteredServices.length} услуг.`, false);
+            } else {
+                setStatus('Сначала выберите точку.', false);
+            }
+
+            selectedSchema = {};
+            fieldsContainer.innerHTML = '';
+            resultEl.innerHTML = '<span class="text-muted">Выберите услугу и параметры для расчета.</span>';
+            createOrderBtn.disabled = true;
+            lastCalculation = null;
+        }
+
         function renderSchemaFields(schema) {
             fieldsContainer.innerHTML = '';
             const row = document.createElement('div');
@@ -193,6 +272,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
         function collectPayload() {
             const payload = {};
+            const selectedPoint = String(pointSelect.value || '').trim();
+            if (selectedPoint) {
+                payload.__point = selectedPoint;
+            }
+
             fieldsContainer.querySelectorAll('[data-field-name]').forEach(function (input) {
                 const name = input.dataset.fieldName;
                 if (!name) return;
@@ -227,33 +311,41 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
 
                 services = await response.json();
-                serviceSelect.innerHTML = '<option value="">Выберите услугу...</option>';
+                renderPoints();
+                renderServicesForPoint();
 
-                services.forEach(function (service) {
-                    const option = document.createElement('option');
-                    option.value = String(service.id);
-                    option.textContent = `${service.name} (${service.slug})`;
-                    serviceSelect.appendChild(option);
-                });
-
-                setStatus(services.length ? 'Каталог загружен.' : 'Каталог пуст.', false);
+                if (!services.length) {
+                    setStatus('Каталог пуст.', true);
+                }
             } catch (_err) {
                 setStatus('Не удалось загрузить каталог услуг.', true);
             }
         }
 
+        pointSelect.addEventListener('change', function () {
+            renderServicesForPoint();
+        });
+
         serviceSelect.addEventListener('change', function () {
             const serviceId = Number(serviceSelect.value || 0);
-            const service = services.find(function (s) { return Number(s.id) === serviceId; });
+            const service = filteredServices.find(function (s) { return Number(s.id) === serviceId; });
             selectedSchema = (service && service.calculator_schema) || {};
             renderSchemaFields(selectedSchema);
             resultEl.innerHTML = '<span class="text-muted">Нажмите "Рассчитать" для получения стоимости.</span>';
+            createOrderBtn.disabled = true;
+            lastCalculation = null;
         });
 
         form.addEventListener('submit', async function (event) {
             event.preventDefault();
 
             const serviceId = Number(serviceSelect.value || 0);
+            const point = String(pointSelect.value || '').trim();
+            if (!point) {
+                setStatus('Сначала выберите точку.', true);
+                return;
+            }
+
             if (!serviceId) {
                 setStatus('Сначала выберите услугу.', true);
                 return;
@@ -282,9 +374,70 @@ document.addEventListener('DOMContentLoaded', function () {
                     data.currency || selectedSchema.currency || 'RUB',
                     data.breakdown || []
                 );
+                lastCalculation = {
+                    serviceId,
+                    point,
+                    payload: collectPayload(),
+                    total: data.total,
+                    currency: data.currency || selectedSchema.currency || 'RUB',
+                };
+                createOrderBtn.disabled = false;
                 setStatus('Расчет выполнен.', false);
             } catch (_err) {
                 setStatus('Ошибка расчета. Проверьте параметры и повторите.', true);
+            }
+        });
+
+        createOrderBtn.addEventListener('click', async function () {
+            if (!lastCalculation) {
+                setStatus('Сначала выполните расчет.', true);
+                return;
+            }
+
+            const clientName = String((clientNameInput && clientNameInput.value) || '').trim();
+            const clientPhone = String((clientPhoneInput && clientPhoneInput.value) || '').trim();
+            if (!clientName) {
+                setStatus('Укажите имя клиента.', true);
+                return;
+            }
+
+            createOrderBtn.disabled = true;
+            setStatus('Создаем заявку...', false);
+
+            try {
+                const orderPayload = {
+                    source_channel: `point:${lastCalculation.point}`,
+                    currency: lastCalculation.currency,
+                    client: {
+                        name: clientName,
+                        phone: clientPhone,
+                    },
+                    items: [
+                        {
+                            service_id: lastCalculation.serviceId,
+                            quantity: 1,
+                            calculator_payload: lastCalculation.payload,
+                        },
+                    ],
+                };
+
+                const response = await fetch('/api/v1/orders', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(orderPayload),
+                });
+
+                if (!response.ok) {
+                    throw new Error('order_create_failed');
+                }
+
+                const data = await response.json();
+                const orderNo = data.order_no || data.id;
+                setStatus(`Заявка создана: ${orderNo}`, false);
+            } catch (_err) {
+                setStatus('Не удалось создать заявку.', true);
+            } finally {
+                createOrderBtn.disabled = false;
             }
         });
 

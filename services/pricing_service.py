@@ -96,6 +96,35 @@ def _normalize_schema(schema: dict | None) -> dict:
     return normalized_schema
 
 
+def _extract_selected_point(payload: dict | None) -> str:
+    if not isinstance(payload, dict):
+        return ""
+
+    for key in ("__point", "point", "location", "branch"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        point = str(value).strip()
+        if point:
+            return point
+    return ""
+
+
+def _resolve_base_price_for_point(base_price: float, schema: dict, payload: dict | None) -> tuple[float, str]:
+    selected_point = _extract_selected_point(payload)
+    if not selected_point:
+        return float(base_price or 0), ""
+
+    point_prices = schema.get("point_prices")
+    if not isinstance(point_prices, dict):
+        return float(base_price or 0), selected_point
+
+    if selected_point not in point_prices:
+        return float(base_price or 0), selected_point
+
+    return as_float(point_prices.get(selected_point), float(base_price or 0)), selected_point
+
+
 def _apply_commission(total: float, schema: dict | None, breakdown: list[dict]) -> float:
     commission = (schema or {}).get("commission")
     if not isinstance(commission, dict):
@@ -134,13 +163,15 @@ def _apply_commission(total: float, schema: dict | None, breakdown: list[dict]) 
 
 def calculate_total_with_breakdown(base_price: float, schema: dict | None, payload: dict | None) -> tuple[float, list[dict]]:
     schema = _normalize_schema(schema)
-    total = float(base_price or 0)
+    resolved_base_price, selected_point = _resolve_base_price_for_point(base_price, schema, payload)
+    total = float(resolved_base_price or 0)
     breakdown: list[dict] = [
         {
             "type": "base_price",
             "label": "Base price",
-            "value": float(base_price or 0),
-            "delta": float(base_price or 0),
+            "value": float(resolved_base_price or 0),
+            "delta": float(resolved_base_price or 0),
+            "point": selected_point,
         }
     ]
 

@@ -95,3 +95,22 @@ def test_pricing_service_supports_simplified_manager_schema():
     assert any(item["type"] == "add" and item.get("field") == "hours" for item in breakdown)
     assert any(item["type"] == "boolean" and item.get("field") == "urgent" for item in breakdown)
     assert any(item["type"] == "select" and item.get("field") == "tier" for item in breakdown)
+
+
+def test_pricing_service_uses_point_specific_base_price():
+    schema = {
+        "point_prices": {
+            "Точка А": 1500,
+            "Точка Б": 2300,
+        },
+        "fields": [
+            {"name": "hours", "type": "number", "coefficient": 100},
+        ],
+    }
+
+    total, breakdown = calculate_total_with_breakdown(1000, schema, {"__point": "Точка Б", "hours": 1})
+
+    assert total == 2400
+    assert breakdown[0]["type"] == "base_price"
+    assert breakdown[0]["value"] == 2300
+    assert breakdown[0]["point"] == "Точка Б"
