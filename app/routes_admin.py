@@ -20,6 +20,7 @@ from app.auth import (
 )
 from app.schema_loader import get_all_modules
 from app import sync_service
+from models.crm import Executor, Location, LocationPrice, Service
 
 router = APIRouter(prefix="/admin")
 templates = Jinja2Templates(directory="templates")
@@ -208,6 +209,152 @@ async def admin_services(
         "user": user,
         "modules": modules,
     })
+
+
+@router.get("/locations", response_class=HTMLResponse)
+async def admin_locations(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_services_manager(user)
+    modules = await get_all_modules(db)
+
+    locations = (await db.execute(select(Location).order_by(Location.name.asc()))).scalars().all()
+    executors = (await db.execute(select(Executor).order_by(Executor.name.asc()))).scalars().all()
+    services = (
+        await db.execute(
+            select(Service)
+            .where(Service.is_active == True)
+            .order_by(Service.category.asc(), Service.name.asc())
+        )
+    ).scalars().all()
+    prices = (await db.execute(select(LocationPrice))).scalars().all()
+    price_map = {(int(p.location_id), int(p.service_id)): float(p.price or 0) for p in prices}
+
+    return templates.TemplateResponse("admin/locations.html", {
+        "request": request,
+        "user": user,
+        "modules": modules,
+        "locations": locations,
+        "executors": executors,
+        "services": services,
+        "price_map": price_map,
+    })
+
+
+@router.post("/locations/create")
+async def admin_location_create(
+    name: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_services_manager(user)
+    normalized = str(name or "").strip()
+    if not normalized:
+        return RedirectResponse("/admin/locations", status_code=302)
+
+    existing = (await db.execute(select(Location).where(Location.name == normalized))).scalar_one_or_none()
+    if not existing:
+        db.add(Location(name=normalized, is_active=True))
+        await db.commit()
+
+    return RedirectResponse("/admin/locations", status_code=302)
+
+
+@router.post("/locations/{location_id}/toggle")
+async def admin_location_toggle(
+    location_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_services_manager(user)
+    location = (await db.execute(select(Location).where(Location.id == location_id))).scalar_one_or_none()
+    if location:
+        location.is_active = not bool(location.is_active)
+        await db.commit()
+    return RedirectResponse("/admin/locations", status_code=302)
+
+
+@router.post("/executors/{executor_id}/location")
+async def admin_executor_set_location(
+    executor_id: int,
+    location_id: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_services_manager(user)
+    executor = (await db.execute(select(Executor).where(Executor.id == executor_id))).scalar_one_or_none()
+    if not executor:
+        raise HTTPException(status_code=404, detail="executor_not_found")
+
+    value = str(location_id or "").strip()
+    if not value:
+        executor.location_id = None
+        await db.commit()
+        return RedirectResponse("/admin/locations", status_code=302)
+
+    target = (await db.execute(select(Location).where(Location.id == int(value)))).scalar_one_or_none()
+    if target:
+        executor.location_id = int(target.id)
+        await db.commit()
+
+    return RedirectResponse("/admin/locations", status_code=302)
+
+
+@router.post("/locations/{location_id}/prices")
+async def admin_location_prices_update(
+    request: Request,
+    location_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_services_manager(user)
+    location = (await db.execute(select(Location).where(Location.id == location_id))).scalar_one_or_none()
+    if not location:
+        raise HTTPException(status_code=404, detail="location_not_found")
+
+    services = (
+        await db.execute(select(Service).where(Service.is_active == True))
+    ).scalars().all()
+    service_ids = {int(s.id) for s in services}
+    existing = (
+        await db.execute(select(LocationPrice).where(LocationPrice.location_id == location_id))
+    ).scalars().all()
+    existing_map = {int(p.service_id): p for p in existing}
+
+    form = await request.form()
+    changed = False
+    for key, value in form.items():
+        if not str(key).startswith("price_"):
+            continue
+        raw_service_id = str(key)[6:]
+        if not raw_service_id.isdigit():
+            continue
+        service_id = int(raw_service_id)
+        if service_id not in service_ids:
+            continue
+
+        raw_price = str(value or "").replace(",", ".").strip()
+        try:
+            price = float(raw_price) if raw_price else 0.0
+        except ValueError:
+            continue
+
+        row = existing_map.get(service_id)
+        if row is None:
+            db.add(LocationPrice(location_id=location_id, service_id=service_id, price=price))
+            changed = True
+        else:
+            current = float(row.price or 0)
+            if current != price:
+                row.price = price
+                changed = True
+
+    if changed:
+        await db.commit()
+
+    return RedirectResponse("/admin/locations", status_code=302)
 
 
 # ─── ROLES ───────────────────────────────────────────────

@@ -1,0 +1,142 @@
+{% extends "layout.html" %}
+{% block title %}Точки и мастера{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-geo-alt me-2"></i>Точки и мастера</h4>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <form method="post" action="/admin/locations/create" class="row g-2 align-items-end">
+            <div class="col-12 col-md-6 col-lg-4">
+                <label class="form-label mb-1">Новая точка</label>
+                <input type="text" name="name" class="form-control" placeholder="Например, ТЦ Центр" required>
+            </div>
+            <div class="col-12 col-md-3 col-lg-2 d-grid">
+                <button type="submit" class="btn btn-primary">Добавить точку</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white fw-semibold">Список точек</div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Точка</th>
+                        <th>Статус</th>
+                        <th class="text-end">Действие</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for location in locations %}
+                    <tr>
+                        <td>{{ location.name }}</td>
+                        <td>
+                            {% if location.is_active %}
+                            <span class="badge bg-success">Активна</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Отключена</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <form method="post" action="/admin/locations/{{ location.id }}/toggle" class="d-inline">
+                                <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                    {% if location.is_active %}Отключить{% else %}Включить{% endif %}
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="3" class="text-muted">Нет точек.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white fw-semibold">Привязка мастеров к точкам</div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Мастер</th>
+                        <th>Текущая загрузка</th>
+                        <th>Точка</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for executor in executors %}
+                    <tr>
+                        <td>{{ executor.name }}</td>
+                        <td>{{ executor.current_active_tasks }}/{{ executor.max_active_tasks }}</td>
+                        <td>
+                            <form method="post" action="/admin/executors/{{ executor.id }}/location" class="d-flex gap-2">
+                                <select name="location_id" class="form-select form-select-sm">
+                                    <option value="">Без точки</option>
+                                    {% for location in locations %}
+                                    <option value="{{ location.id }}" {% if executor.location_id == location.id %}selected{% endif %}>{{ location.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <button type="submit" class="btn btn-sm btn-outline-primary">Сохранить</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="3" class="text-muted">Нет мастеров.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% for location in locations %}
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white fw-semibold">Прайс точки: {{ location.name }}</div>
+    <div class="card-body p-0">
+        <form method="post" action="/admin/locations/{{ location.id }}/prices">
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Категория</th>
+                            <th>Услуга</th>
+                            <th style="width: 200px;">Цена (RUB)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for service in services %}
+                        <tr>
+                            <td class="text-muted small">{{ service.category }}</td>
+                            <td>{{ service.name }}</td>
+                            <td>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    name="price_{{ service.id }}"
+                                    class="form-control form-control-sm"
+                                    value="{{ price_map.get((location.id, service.id), service.base_price or 0) }}"
+                                >
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="3" class="text-muted">Нет активных услуг.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="p-3 border-top d-flex justify-content-end">
+                <button type="submit" class="btn btn-primary">Сохранить прайс точки</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}
