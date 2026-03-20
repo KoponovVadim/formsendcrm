@@ -200,6 +200,33 @@ Local Database (PostgreSQL)
 }
 ```
 
+Упрощенный формат для менеджеров (поддерживается автоматически):
+
+```json
+{
+     "currency": "RUB",
+     "round_to": 2,
+     "fields": [
+          {"name": "hours", "label": "Часы", "type": "number", "price": 1200},
+          {"name": "express", "label": "Срочно", "type": "boolean", "price": 700},
+          {
+               "name": "device_type",
+               "label": "Тип устройства",
+               "type": "select",
+               "choices": {
+                    "phone": 0,
+                    "laptop": 900
+               }
+          }
+     ]
+}
+```
+
+Как это работает:
+- Для `number` поле `price` трактуется как `coefficient`.
+- Для `boolean` поле `price` трактуется как `true_price`.
+- Для `select` объект `choices` автоматически преобразуется в список `options`.
+
 ## Миграции Alembic
 
 В проект добавлен Alembic для управляемых миграций базы данных.

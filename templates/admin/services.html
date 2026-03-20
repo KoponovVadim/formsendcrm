@@ -84,12 +84,13 @@
   "round_to": 2,
   "fields": []
 }</textarea>
-                        <div class="form-text">Поддерживается формат, используемый API `POST /api/v1/catalog/services/{id}/calculate`.</div>
+                        <div class="form-text">Можно использовать простой формат для менеджеров: `price` для числового/чекбокс поля и `choices` для списка. Система сама преобразует его в техническую схему.</div>
                     </div>
                     <div class="col-12 d-flex flex-wrap gap-2">
                         <button type="submit" class="btn btn-primary" id="service-save">
                             <i class="bi bi-save me-1"></i>Сохранить
                         </button>
+                        <button type="button" class="btn btn-outline-secondary" id="service-template-simple">Шаблон для менеджера</button>
                         <button type="button" class="btn btn-outline-secondary" id="service-validate">Проверить JSON</button>
                     </div>
                 </form>
@@ -112,6 +113,7 @@
     const newBtn = document.getElementById('service-new');
     const form = document.getElementById('service-editor-form');
     const validateBtn = document.getElementById('service-validate');
+    const templateSimpleBtn = document.getElementById('service-template-simple');
 
     const idInput = document.getElementById('service-id');
     const slugInput = document.getElementById('service-slug');
@@ -123,6 +125,24 @@
     const editorTitle = document.getElementById('service-editor-title');
 
     let services = [];
+    const SIMPLE_SCHEMA_TEMPLATE = {
+        currency: 'RUB',
+        round_to: 2,
+        minimum_total: 0,
+        fields: [
+            { name: 'hours', label: 'Часы работы', type: 'number', price: 1200 },
+            { name: 'express', label: 'Срочно', type: 'boolean', price: 700 },
+            {
+                name: 'device_type',
+                label: 'Тип устройства',
+                type: 'select',
+                choices: {
+                    phone: 0,
+                    laptop: 900
+                }
+            }
+        ]
+    };
 
     function setStatus(text, isError) {
         statusEl.textContent = text || '';
@@ -296,6 +316,11 @@
         } catch (_err) {
             setEditorStatus('Ошибка JSON: проверьте формат схемы.', true);
         }
+    });
+
+    templateSimpleBtn.addEventListener('click', function () {
+        schemaInput.value = JSON.stringify(SIMPLE_SCHEMA_TEMPLATE, null, 2);
+        setEditorStatus('Подставлен упрощенный шаблон для менеджера.', false);
     });
 
     resetForm();

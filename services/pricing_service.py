@@ -18,6 +18,84 @@ def as_bool(value) -> bool:
     return False
 
 
+def _normalize_select_options(field: dict) -> list[dict]:
+    raw_options = field.get("options")
+    if isinstance(raw_options, list):
+        return raw_options
+
+    raw_choices = field.get("choices")
+    options: list[dict] = []
+
+    if isinstance(raw_choices, dict):
+        for key, value in raw_choices.items():
+            options.append({"value": str(key), "price": as_float(value, 0.0)})
+        return options
+
+    if isinstance(raw_choices, list):
+        for item in raw_choices:
+            if isinstance(item, dict):
+                option_value = item.get("value", item.get("name", ""))
+                options.append(
+                    {
+                        "value": str(option_value),
+                        "price": as_float(item.get("price", 0), 0.0),
+                        "multiplier": as_float(item.get("multiplier", 1), 1.0),
+                        "label": item.get("label", item.get("name", option_value)),
+                    }
+                )
+            else:
+                options.append({"value": str(item), "price": 0.0})
+        return options
+
+    return []
+
+
+def _normalize_field(field: dict) -> dict:
+    normalized = dict(field)
+    field_type = str(normalized.get("type", normalized.get("kind", "number"))).strip().lower()
+    normalized["type"] = field_type
+
+    if "label" not in normalized and "name" in normalized:
+        normalized["label"] = normalized.get("name")
+
+    if field_type in {"number", "int", "float"}:
+        if "coefficient" not in normalized and "price" in normalized:
+            normalized["coefficient"] = normalized.get("price")
+        normalized.setdefault("coefficient", 0)
+        normalized.setdefault("offset", 0)
+        normalized.setdefault("operation", "add")
+
+    elif field_type in {"boolean", "bool", "checkbox"}:
+        if "true_price" not in normalized and "price" in normalized:
+            normalized["true_price"] = normalized.get("price")
+        normalized.setdefault("true_price", 0)
+        normalized.setdefault("false_price", 0)
+
+    elif field_type in {"select", "enum", "choice"}:
+        normalized["options"] = _normalize_select_options(normalized)
+
+    return normalized
+
+
+def _normalize_schema(schema: dict | None) -> dict:
+    if not isinstance(schema, dict):
+        return {"fields": []}
+
+    fields = schema.get("fields", [])
+    if not isinstance(fields, list):
+        fields = []
+
+    normalized_fields: list[dict] = []
+    for field in fields:
+        if not isinstance(field, dict):
+            continue
+        normalized_fields.append(_normalize_field(field))
+
+    normalized_schema = dict(schema)
+    normalized_schema["fields"] = normalized_fields
+    return normalized_schema
+
+
 def _apply_commission(total: float, schema: dict | None, breakdown: list[dict]) -> float:
     commission = (schema or {}).get("commission")
     if not isinstance(commission, dict):
@@ -55,6 +133,7 @@ def _apply_commission(total: float, schema: dict | None, breakdown: list[dict]) 
 
 
 def calculate_total_with_breakdown(base_price: float, schema: dict | None, payload: dict | None) -> tuple[float, list[dict]]:
+    schema = _normalize_schema(schema)
     total = float(base_price or 0)
     breakdown: list[dict] = [
         {

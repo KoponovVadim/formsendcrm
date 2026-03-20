@@ -70,3 +70,28 @@ def test_pricing_service_commission_percent_mode():
     assert breakdown[-1]["type"] == "commission"
     assert breakdown[-1]["mode"] == "percent"
     assert breakdown[-1]["delta"] == 20
+
+
+def test_pricing_service_supports_simplified_manager_schema():
+    schema = {
+        "fields": [
+            {"name": "hours", "label": "Часы", "type": "number", "price": 100},
+            {"name": "urgent", "label": "Срочно", "type": "boolean", "price": 50},
+            {
+                "name": "tier",
+                "label": "Тариф",
+                "type": "select",
+                "choices": {
+                    "base": 0,
+                    "pro": 200,
+                },
+            },
+        ]
+    }
+
+    total, breakdown = calculate_total_with_breakdown(100, schema, {"hours": 2, "urgent": True, "tier": "pro"})
+
+    assert total == 550
+    assert any(item["type"] == "add" and item.get("field") == "hours" for item in breakdown)
+    assert any(item["type"] == "boolean" and item.get("field") == "urgent" for item in breakdown)
+    assert any(item["type"] == "select" and item.get("field") == "tier" for item in breakdown)
