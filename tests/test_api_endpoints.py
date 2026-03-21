@@ -318,6 +318,54 @@ async def test_catalog_points_crud_and_point_prices_update(async_client, db_sess
     assert list_after_delete_response.json() == []
 
 
+async def test_catalog_service_enabled_points_create_and_update(async_client, db_session):
+    point_a = Location(name="Point A", is_active=True)
+    point_b = Location(name="Point B", is_active=True)
+    point_c = Location(name="Point C", is_active=True)
+    db_session.add_all([point_a, point_b, point_c])
+    await db_session.commit()
+
+    create_response = await async_client.post(
+        "/api/v1/catalog/services",
+        json={
+            "slug": "point-enabled-service",
+            "name": "Point Enabled Service",
+            "category": "repair",
+            "base_price": 500,
+            "calculator_schema": {"fields": []},
+            "enabled_points": ["Point A", "Point C"],
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()
+    service_id = int(created["id"])
+
+    location_rows = list((await db_session.execute(select(Location))).scalars().all())
+    location_name_by_id = {int(location.id): str(location.name) for location in location_rows}
+
+    initial_prices = list(
+        (
+            await db_session.execute(select(LocationPrice).where(LocationPrice.service_id == service_id))
+        ).scalars().all()
+    )
+    initial_points = sorted([location_name_by_id[int(row.location_id)] for row in initial_prices])
+    assert initial_points == ["Point A", "Point C"]
+
+    update_response = await async_client.patch(
+        f"/api/v1/catalog/services/{service_id}",
+        json={"enabled_points": ["Point B"]},
+    )
+    assert update_response.status_code == 200
+
+    updated_prices = list(
+        (
+            await db_session.execute(select(LocationPrice).where(LocationPrice.service_id == service_id))
+        ).scalars().all()
+    )
+    updated_points = sorted([location_name_by_id[int(row.location_id)] for row in updated_prices])
+    assert updated_points == ["Point B"]
+
+
 async def test_orders_create_endpoint_smoke_from_calculator_payload(async_client, db_session):
     service = Service(
         slug="order-smoke-service",

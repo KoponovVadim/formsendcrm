@@ -86,6 +86,13 @@
                         <input id="service-round-to" type="number" class="form-control" value="2" min="0" max="4" step="1">
                     </div>
                     <div class="col-12">
+                        <label class="form-label mb-1">Доступна в точках</label>
+                        <div id="service-points-availability" class="border rounded p-2" style="max-height: 180px; overflow: auto;">
+                            <div class="small text-muted">Загрузка списка точек...</div>
+                        </div>
+                        <div class="form-text">Отметьте точки, где услуга доступна в калькуляторе.</div>
+                    </div>
+                    <div class="col-12">
                         <div class="d-flex justify-content-between align-items-center mb-2">
                             <label class="form-label mb-0">Поля калькулятора цены</label>
                             <button type="button" class="btn btn-sm btn-outline-primary" id="service-field-add">Добавить поле</button>
@@ -173,6 +180,7 @@
     const pointPricesTableBody = document.querySelector('#point-prices-table tbody');
     const pointPricesSaveBtn = document.getElementById('point-prices-save');
     const pointStatusEl = document.getElementById('point-manager-status');
+    const pointsAvailabilityEl = document.getElementById('service-points-availability');
 
     const idInput = document.getElementById('service-id');
     const slugInput = document.getElementById('service-slug');
@@ -188,6 +196,42 @@
     const editorTitle = document.getElementById('service-editor-title');
 
     let services = [];
+    let allPoints = [];
+
+    function getCurrentSelectedService() {
+        const id = Number(idInput.value || 0);
+        if (id <= 0) return null;
+        return services.find(function (item) { return Number(item.id) === id; }) || null;
+    }
+
+    function renderPointsAvailability(selectedPoints) {
+        const selected = new Set((Array.isArray(selectedPoints) ? selectedPoints : []).map(function (item) {
+            return String(item || '').trim().toLowerCase();
+        }));
+
+        if (!allPoints.length) {
+            pointsAvailabilityEl.innerHTML = '<div class="small text-muted">Сначала добавьте точки.</div>';
+            return;
+        }
+
+        pointsAvailabilityEl.innerHTML = allPoints.map(function (point, index) {
+            const pointName = String(point || '').trim();
+            const checked = selected.has(pointName.toLowerCase()) ? 'checked' : '';
+            const inputId = `service-point-${index}`;
+            return `
+                <div class="form-check">
+                    <input class="form-check-input service-point-check" type="checkbox" value="${pointName}" id="${inputId}" ${checked}>
+                    <label class="form-check-label" for="${inputId}">${pointName}</label>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function collectEnabledPoints() {
+        return Array.from(pointsAvailabilityEl.querySelectorAll('.service-point-check:checked')).map(function (input) {
+            return String(input.value || '').trim();
+        }).filter(Boolean);
+    }
 
     function isHoursFieldName(name) {
         const normalized = String(name || '').trim().toLowerCase();
@@ -347,6 +391,10 @@
         currencyInput.value = 'RUB';
         roundToInput.value = '2';
         renderFieldsBuilder([]);
+        renderPointsAvailability(allPoints);
+        pointsAvailabilityEl.querySelectorAll('.service-point-check').forEach(function (input) {
+            input.checked = true;
+        });
         editorTitle.textContent = 'Новая услуга';
         setEditorStatus('', false);
     }
@@ -362,6 +410,7 @@
         currencyInput.value = String(schema.currency || 'RUB');
         roundToInput.value = Number(schema.round_to || 2);
         renderFieldsBuilder(Array.isArray(schema.fields) ? schema.fields : []);
+        renderPointsAvailability(Array.isArray(service.enabled_points) ? service.enabled_points : []);
         editorTitle.textContent = `Редактирование #${service.id}`;
         setEditorStatus('', false);
     }
@@ -430,6 +479,7 @@
     function renderPoints(points) {
         const previous = pointSelect.value;
         pointSelect.innerHTML = '<option value="">Выберите точку...</option>';
+        allPoints = Array.isArray(points) ? points : [];
 
         (points || []).forEach(function (point) {
             const option = document.createElement('option');
@@ -437,6 +487,16 @@
             option.textContent = point;
             pointSelect.appendChild(option);
         });
+
+        const currentService = getCurrentSelectedService();
+        if (currentService) {
+            renderPointsAvailability(Array.isArray(currentService.enabled_points) ? currentService.enabled_points : []);
+        } else {
+            renderPointsAvailability(allPoints);
+            pointsAvailabilityEl.querySelectorAll('.service-point-check').forEach(function (input) {
+                input.checked = true;
+            });
+        }
 
         if (previous && (points || []).includes(previous)) {
             pointSelect.value = previous;
@@ -612,6 +672,7 @@
             base_price: Number(basePriceInput.value || 0),
             is_active: Boolean(isActiveInput.checked),
             calculator_schema: schema,
+            enabled_points: collectEnabledPoints(),
         };
 
         if (!payload.slug || !payload.name) {

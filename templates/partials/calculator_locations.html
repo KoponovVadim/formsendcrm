@@ -10,7 +10,7 @@
 {% endif %}
 <div class="calc-locations-grid">
     {% for location, point_price, own_price, orders_count, partner_prices in rows %}
-    <button type="button" class="btn btn-outline-dark text-start calc-location-btn" data-location-id="{{ location.id }}" data-price="{{ point_price }}">
+    <button type="button" class="btn btn-outline-dark text-start calc-location-btn" data-location-id="{{ location.id }}" data-point-price="{{ point_price }}" data-own-price="{{ own_price }}">
         <div class="fw-semibold">{{ location.name }}</div>
         <div class="small fw-semibold">Цена точки: {{ point_price }} RUB</div>
         <div class="small text-muted">Наша цена: {{ own_price }} RUB</div>

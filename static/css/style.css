@@ -102,14 +102,14 @@
     min-height: 92px;
 }
 
-.calc-location-btn.active {
-    background: #0f172a;
-    border-color: #0f172a;
-    color: #ffffff;
+.calc-location-btn.is-selected {
+    background: #e6f1ff;
+    border-color: #3b82f6;
+    color: #0f172a;
 }
 
-.calc-location-btn.active .text-muted {
-    color: #cbd5e1 !important;
+.calc-location-btn.is-selected .text-muted {
+    color: #334155 !important;
 }
 
 .calc-actions-fixed {

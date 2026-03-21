@@ -167,16 +167,17 @@
         if (locationBtn) {
             const locationId = Number(locationBtn.dataset.locationId || 0);
             const serviceId = Number(serviceIdInput.value || 0);
-            const price = Number(locationBtn.dataset.price || 0);
+            const pointPrice = Number(locationBtn.dataset.pointPrice || 0);
+            const ownPrice = Number(locationBtn.dataset.ownPrice || 0);
 
             if (locationId <= 0 || serviceId <= 0) return;
 
-            document.querySelectorAll('.calc-location-btn').forEach(function (btn) { btn.classList.remove('active'); });
-            locationBtn.classList.add('active');
+            document.querySelectorAll('.calc-location-btn').forEach(function (btn) { btn.classList.remove('is-selected'); });
+            locationBtn.classList.add('is-selected');
 
             locationIdInput.value = String(locationId);
-            priceInput.value = String(price);
-            updateTotal(price, 'RUB');
+            priceInput.value = String(ownPrice);
+            updateTotal(ownPrice, 'RUB');
             resetBelowLocation();
 
             htmx.ajax('GET', `/calculator/executors?location_id=${locationId}&service_id=${serviceId}&category=${encodeURIComponent(categoryInput.value || '')}`, {
@@ -328,6 +329,7 @@
             servicesBlock.innerHTML = '<div class="small text-muted">Выберите категорию</div>';
             locationsBlock.innerHTML = '<div class="small text-muted">Выберите услугу</div>';
             executorsBlock.innerHTML = '<div class="small text-muted">Выберите точку</div>';
+            document.querySelectorAll('.calc-location-btn').forEach(function (btn) { btn.classList.remove('is-selected'); });
             updateTotal(0, 'RUB');
         } catch (err) {
             if (err && err.message === 'auth_required') {
