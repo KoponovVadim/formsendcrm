@@ -379,13 +379,14 @@ async def record_update_single_field(
     all_field_names = [f["name"] for f in module.fields_schema]
     editable_fields = get_editable_fields(permissions, slug, all_field_names, user.is_superuser)
 
-    if field not in all_field_names:
-        raise HTTPException(400, "Поле не найдено")
-    if field not in editable_fields:
-        raise HTTPException(403, "Поле недоступно для редактирования")
-
     status_field, _, status_colors = _extract_status_settings(module)
     allowed_meta_fields = {"__partner_issued__"}
+
+    if field not in all_field_names and field not in allowed_meta_fields:
+        raise HTTPException(400, "Поле не найдено")
+    if field not in editable_fields and field not in allowed_meta_fields:
+        raise HTTPException(403, "Поле недоступно для редактирования")
+
     if status_field and field != status_field and field not in allowed_meta_fields:
         raise HTTPException(400, "Inline-обновление разрешено только для статуса и флага выдачи")
 
@@ -401,8 +402,8 @@ async def record_update_single_field(
         if not status_field:
             raise HTTPException(400, "Статусное поле не настроено")
         current_status = str(new_data.get(status_field, ""))
-        if not _status_eq(current_status, "Готов"):
-            raise HTTPException(400, "Флаг выдачи доступен только для статуса 'Готов'")
+        if not (_status_eq(current_status, "Готов") or _status_eq(current_status, "Выдан")):
+            raise HTTPException(400, "Флаг выдачи доступен только для статусов 'Готов' и 'Выдан'")
         new_data[field] = str(value).strip().lower() in {"1", "true", "on", "yes"}
     else:
         new_data[field] = value

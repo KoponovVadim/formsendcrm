@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+from uuid import uuid4
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.events import event_bus
@@ -23,7 +24,7 @@ class OrderService:
         )
 
         order = Order(
-            order_no=str(payload.get("order_no") or f"ORD-{int(datetime.now(timezone.utc).timestamp())}"),
+            order_no=str(payload.get("order_no") or self._generate_order_no()),
             client_id=client.id,
             location_id=int(payload.get("location_id", 0) or 0) or None,
             status=str(payload.get("status", "new")),
@@ -102,6 +103,12 @@ class OrderService:
 
         await event_bus.publish("orders", {"type": "order_created", "order_id": order.id, "order_no": order.order_no})
         return order
+
+    def _generate_order_no(self) -> str:
+        # Milliseconds + short random suffix minimize uniqueness collisions under concurrent creates.
+        ts_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        suffix = uuid4().hex[:6].upper()
+        return f"ORD-{ts_ms}-{suffix}"
 
     async def _create_and_assign_task(self, order: Order, item: OrderItem, preferred_executor_id: int = 0) -> Task:
         service = await self.repo.get_service(item.service_id) if item.service_id else None

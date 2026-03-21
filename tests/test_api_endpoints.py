@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from sqlalchemy import select
 
 from app.auth import get_current_user
-from models.crm import Executor, ExecutorSkill, Service
+from models.crm import Executor, ExecutorSkill, Location, LocationPrice, Service
 from models.omnichannel import Conversation, Message
 
 
@@ -316,6 +316,84 @@ async def test_catalog_points_crud_and_point_prices_update(async_client, db_sess
     list_after_delete_response = await async_client.get("/api/v1/catalog/points")
     assert list_after_delete_response.status_code == 200
     assert list_after_delete_response.json() == []
+
+
+async def test_orders_create_endpoint_smoke_from_calculator_payload(async_client, db_session):
+    service = Service(
+        slug="order-smoke-service",
+        name="Order smoke service",
+        category="repair",
+        is_active=True,
+        base_price=100,
+        calculator_schema={"fields": []},
+    )
+    location = Location(name="Smoke point", is_active=True)
+    db_session.add_all([service, location])
+    await db_session.flush()
+    db_session.add(LocationPrice(location_id=location.id, service_id=service.id, price=135))
+    await db_session.commit()
+
+    response = await async_client.post(
+        "/api/v1/orders",
+        json={
+            "client": {"name": "Smoke Client", "phone": "79990000000"},
+            "service_id": service.id,
+            "location_id": location.id,
+            "items": [
+                {
+                    "service_id": service.id,
+                    "quantity": 1,
+                    "unit_price": 135,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload.get("id"), int)
+    assert str(payload.get("order_no", "")).startswith("ORD-")
+    assert payload.get("status") == "new"
+
+
+async def test_catalog_point_prices_auto_collect_partner_prices_from_points(async_client, db_session):
+    service = Service(
+        slug="partners-screen",
+        name="Partners screen",
+        category="repair",
+        is_active=True,
+        base_price=1800,
+        calculator_schema={"fields": []},
+    )
+    db_session.add(service)
+    await db_session.commit()
+
+    create_a = await async_client.post("/api/v1/catalog/points", json={"name": "Partner A"})
+    create_b = await async_client.post("/api/v1/catalog/points", json={"name": "Partner B"})
+    assert create_a.status_code == 200
+    assert create_b.status_code == 200
+
+    update_a = await async_client.put(
+        "/api/v1/catalog/points/Partner%20A/prices",
+        json={"prices": [{"service_id": service.id, "price": 3000}]},
+    )
+    update_b = await async_client.put(
+        "/api/v1/catalog/points/Partner%20B/prices",
+        json={"prices": [{"service_id": service.id, "price": 2000}]},
+    )
+    assert update_a.status_code == 200
+    assert update_b.status_code == 200
+
+    get_prices_response = await async_client.get("/api/v1/catalog/points/Partner%20A/prices")
+    assert get_prices_response.status_code == 200
+    payload = get_prices_response.json()
+    assert payload["point"] == "Partner A"
+    assert len(payload["prices"]) == 1
+
+    row = payload["prices"][0]
+    assert row["price"] == 3000
+    assert row["partner_prices"]["Partner A"] == 3000
+    assert row["partner_prices"]["Partner B"] == 2000
 
 
 async def test_catalog_points_endpoints_denied_without_manage_access(async_client, api_app):

@@ -38,7 +38,7 @@ class CRMRepository:
         stmt = stmt.order_by(Service.name.asc()).limit(100)
         return list((await self.db.execute(stmt)).scalars().all())
 
-    async def list_locations_for_service(self, service_id: int) -> list[tuple[Location, float, int]]:
+    async def list_locations_for_service(self, service_id: int) -> list[tuple[Location, float, int, list[dict]]]:
         rows = (
             await self.db.execute(
                 select(Location, LocationPrice.price)
@@ -52,17 +52,44 @@ class CRMRepository:
             return []
 
         location_ids = [int(location.id) for location, _ in rows]
+        active_order_statuses = [
+            "new",
+            "open",
+            "assigned",
+            "in_progress",
+            "в работе",
+            "ожидание",
+            "готов",
+        ]
         counts = (
             await self.db.execute(
                 select(Order.location_id, func.count(Order.id))
-                .where(Order.location_id.in_(location_ids))
+                .where(
+                    Order.location_id.in_(location_ids),
+                    func.lower(func.coalesce(Order.status, "")).in_(active_order_statuses),
+                )
                 .group_by(Order.location_id)
             )
         ).all()
         count_map = {int(location_id): int(total) for location_id, total in counts}
 
+        all_partner_prices = [
+            {
+                "partner_name": str(location.name or "").strip(),
+                "price": float(price or 0),
+                "in_work": count_map.get(int(location.id), 0),
+            }
+            for location, price in rows
+            if str(location.name or "").strip()
+        ]
+
         return [
-            (location, float(price or 0), count_map.get(int(location.id), 0))
+            (
+                location,
+                float(price or 0),
+                count_map.get(int(location.id), 0),
+                all_partner_prices,
+            )
             for location, price in rows
         ]
 

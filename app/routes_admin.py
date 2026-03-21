@@ -166,6 +166,13 @@ def _require_services_manager(user):
         raise HTTPException(status_code=403, detail="services_manage_access_denied")
 
 
+def _safe_admin_redirect_path(value: str, default: str = "/admin/locations") -> str:
+    path = str(value or "").strip()
+    if path.startswith("/admin/"):
+        return path
+    return default
+
+
 @router.get("/", response_class=HTMLResponse)
 async def admin_dashboard(
     request: Request,
@@ -243,6 +250,34 @@ async def admin_locations(
     })
 
 
+@router.get("/executors", response_class=HTMLResponse)
+async def admin_executors(
+    request: Request,
+    q: str = "",
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_services_manager(user)
+    modules = await get_all_modules(db)
+
+    query = str(q or "").strip()
+    stmt = select(Executor).order_by(Executor.name.asc())
+    if query:
+        stmt = stmt.where(Executor.name.ilike(f"%{query}%"))
+
+    executors = (await db.execute(stmt)).scalars().all()
+    locations = (await db.execute(select(Location).order_by(Location.name.asc()))).scalars().all()
+
+    return templates.TemplateResponse("admin/executors.html", {
+        "request": request,
+        "user": user,
+        "modules": modules,
+        "executors": executors,
+        "locations": locations,
+        "query": query,
+    })
+
+
 @router.post("/locations/create")
 async def admin_location_create(
     name: str = Form(""),
@@ -276,14 +311,70 @@ async def admin_location_toggle(
     return RedirectResponse("/admin/locations", status_code=302)
 
 
-@router.post("/executors/{executor_id}/location")
-async def admin_executor_set_location(
-    executor_id: int,
+@router.post("/executors/create")
+async def admin_executor_create(
+    name: str = Form(""),
     location_id: str = Form(""),
+    max_active_tasks: int = Form(10),
+    return_to: str = Form("/admin/locations"),
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
     _require_services_manager(user)
+    redirect_to = _safe_admin_redirect_path(return_to)
+
+    normalized = str(name or "").strip()
+    if not normalized:
+        return RedirectResponse(redirect_to, status_code=302)
+
+    safe_max_tasks = max(1, min(int(max_active_tasks or 10), 100))
+    parsed_location_id = None
+    value = str(location_id or "").strip()
+    if value.isdigit():
+        target = (await db.execute(select(Location).where(Location.id == int(value)))).scalar_one_or_none()
+        if target:
+            parsed_location_id = int(target.id)
+
+    db.add(
+        Executor(
+            name=normalized,
+            location_id=parsed_location_id,
+            max_active_tasks=safe_max_tasks,
+            current_active_tasks=0,
+            is_active=True,
+        )
+    )
+    await db.commit()
+
+    return RedirectResponse(redirect_to, status_code=302)
+
+
+@router.post("/executors/{executor_id}/toggle")
+async def admin_executor_toggle(
+    executor_id: int,
+    return_to: str = Form("/admin/locations"),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_services_manager(user)
+    redirect_to = _safe_admin_redirect_path(return_to)
+    executor = (await db.execute(select(Executor).where(Executor.id == executor_id))).scalar_one_or_none()
+    if executor:
+        executor.is_active = not bool(executor.is_active)
+        await db.commit()
+    return RedirectResponse(redirect_to, status_code=302)
+
+
+@router.post("/executors/{executor_id}/location")
+async def admin_executor_set_location(
+    executor_id: int,
+    location_id: str = Form(""),
+    return_to: str = Form("/admin/locations"),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_services_manager(user)
+    redirect_to = _safe_admin_redirect_path(return_to)
     executor = (await db.execute(select(Executor).where(Executor.id == executor_id))).scalar_one_or_none()
     if not executor:
         raise HTTPException(status_code=404, detail="executor_not_found")
@@ -292,14 +383,14 @@ async def admin_executor_set_location(
     if not value:
         executor.location_id = None
         await db.commit()
-        return RedirectResponse("/admin/locations", status_code=302)
+        return RedirectResponse(redirect_to, status_code=302)
 
     target = (await db.execute(select(Location).where(Location.id == int(value)))).scalar_one_or_none()
     if target:
         executor.location_id = int(target.id)
         await db.commit()
 
-    return RedirectResponse("/admin/locations", status_code=302)
+    return RedirectResponse(redirect_to, status_code=302)
 
 
 @router.post("/locations/{location_id}/prices")

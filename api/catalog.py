@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import can_manage_services, get_current_user
 from app.database import get_db
-from models.crm import Service
+from models.crm import Location, LocationPrice, Service
 from repositories.crm_repository import CRMRepository
 from services.pricing_service import as_float, calculate_total_with_breakdown
 
@@ -61,29 +61,18 @@ def _normalize_point_name(value: str) -> str:
     return str(value or "").strip()
 
 
-def _get_point_prices(schema: dict | None) -> dict:
-    source = schema if isinstance(schema, dict) else {}
-    point_prices = source.get("point_prices")
-    if isinstance(point_prices, dict):
-        return dict(point_prices)
-    return {}
-
-
-def _set_point_price(schema: dict | None, point_name: str, price: float) -> dict:
-    source = dict(schema) if isinstance(schema, dict) else {}
-    point_prices = _get_point_prices(source)
-    point_prices[point_name] = float(price)
-    source["point_prices"] = point_prices
-    return source
-
-
-def _remove_point_price(schema: dict | None, point_name: str) -> dict:
-    source = dict(schema) if isinstance(schema, dict) else {}
-    point_prices = _get_point_prices(source)
-    if point_name in point_prices:
-        point_prices.pop(point_name, None)
-    source["point_prices"] = point_prices
-    return source
+def _build_auto_partner_prices(price_rows: list[LocationPrice], locations_by_id: dict[int, Location]) -> dict[int, dict[str, float]]:
+    grouped: dict[int, dict[str, float]] = {}
+    for row in price_rows:
+        location = locations_by_id.get(int(row.location_id))
+        if not location:
+            continue
+        location_name = str(location.name or "").strip()
+        if not location_name:
+            continue
+        service_id = int(row.service_id)
+        grouped.setdefault(service_id, {})[location_name] = float(row.price or 0)
+    return grouped
 
 
 @router.get("/services")
@@ -130,17 +119,8 @@ async def list_points(db: AsyncSession = Depends(get_db), user=Depends(get_curre
     if not can_manage_services(user):
         raise HTTPException(403, "services_manage_access_denied")
 
-    services = list((await db.execute(select(Service))).scalars().all())
-    point_names: set[str] = set()
-
-    for service in services:
-        point_prices = _get_point_prices(service.calculator_schema)
-        for point_name in point_prices.keys():
-            normalized = _normalize_point_name(point_name)
-            if normalized:
-                point_names.add(normalized)
-
-    return sorted(point_names)
+    locations = list((await db.execute(select(Location).order_by(Location.name.asc()))).scalars().all())
+    return [str(location.name or "") for location in locations if str(location.name or "").strip()]
 
 
 @router.post("/points")
@@ -152,15 +132,32 @@ async def create_point(payload: dict, db: AsyncSession = Depends(get_db), user=D
     if not point_name:
         raise HTTPException(400, "point_name_required")
 
-    services = list((await db.execute(select(Service))).scalars().all())
-    if not services:
-        raise HTTPException(400, "services_empty")
+    location = (await db.execute(select(Location).where(Location.name == point_name))).scalar_one_or_none()
+    if not location:
+        location = Location(name=point_name, is_active=True)
+        db.add(location)
+        await db.flush()
 
-    for service in services:
-        point_prices = _get_point_prices(service.calculator_schema)
-        if point_name in point_prices:
-            continue
-        service.calculator_schema = _set_point_price(service.calculator_schema, point_name, float(service.base_price or 0))
+    services = list((await db.execute(select(Service))).scalars().all())
+    if services:
+        existing = list(
+            (
+                await db.execute(
+                    select(LocationPrice).where(LocationPrice.location_id == int(location.id))
+                )
+            ).scalars().all()
+        )
+        existing_map = {int(row.service_id): row for row in existing}
+        for service in services:
+            if int(service.id) in existing_map:
+                continue
+            db.add(
+                LocationPrice(
+                    location_id=int(location.id),
+                    service_id=int(service.id),
+                    price=float(service.base_price or 0),
+                )
+            )
 
     await db.commit()
     return {"ok": True, "point": point_name}
@@ -175,9 +172,12 @@ async def delete_point(point_name: str, db: AsyncSession = Depends(get_db), user
     if not normalized_name:
         raise HTTPException(400, "point_name_required")
 
-    services = list((await db.execute(select(Service))).scalars().all())
-    for service in services:
-        service.calculator_schema = _remove_point_price(service.calculator_schema, normalized_name)
+    location = (await db.execute(select(Location).where(Location.name == normalized_name))).scalar_one_or_none()
+    if not location:
+        return {"ok": True}
+
+    await db.execute(delete(LocationPrice).where(LocationPrice.location_id == int(location.id)))
+    await db.delete(location)
 
     await db.commit()
     return {"ok": True}
@@ -192,19 +192,43 @@ async def get_point_prices(point_name: str, db: AsyncSession = Depends(get_db), 
     if not normalized_name:
         raise HTTPException(400, "point_name_required")
 
+    location = (await db.execute(select(Location).where(Location.name == normalized_name))).scalar_one_or_none()
+    if not location:
+        raise HTTPException(404, "point_not_found")
+
     services = list((await db.execute(select(Service).order_by(Service.name.asc()))).scalars().all())
+    all_locations = list((await db.execute(select(Location))).scalars().all())
+    location_by_id = {int(loc.id): loc for loc in all_locations}
+
+    all_price_rows = list(
+        (
+            await db.execute(select(LocationPrice))
+        ).scalars().all()
+    )
+    partner_prices_by_service = _build_auto_partner_prices(all_price_rows, location_by_id)
+
+    own_location_prices = list(
+        (
+            await db.execute(
+                select(LocationPrice).where(LocationPrice.location_id == int(location.id))
+            )
+        ).scalars().all()
+    )
+    location_price_map = {int(row.service_id): float(row.price or 0) for row in own_location_prices}
+
     rows = []
 
     for service in services:
-        point_prices = _get_point_prices(service.calculator_schema)
+        service_partner_prices = partner_prices_by_service.get(int(service.id), {})
         rows.append(
             {
                 "service_id": service.id,
                 "slug": service.slug,
                 "name": service.name,
                 "category": service.category,
-                "price": float(point_prices.get(normalized_name, service.base_price or 0)),
+                "price": float(location_price_map.get(int(service.id), float(service.base_price or 0))),
                 "base_price": float(service.base_price or 0),
+                "partner_prices": service_partner_prices,
             }
         )
 
@@ -224,8 +248,21 @@ async def update_point_prices(point_name: str, payload: dict, db: AsyncSession =
     if not isinstance(entries, list):
         raise HTTPException(400, "prices_list_required")
 
+    location = (await db.execute(select(Location).where(Location.name == normalized_name))).scalar_one_or_none()
+    if not location:
+        raise HTTPException(404, "point_not_found")
+
     services = list((await db.execute(select(Service))).scalars().all())
     by_id = {service.id: service for service in services}
+
+    existing_location_prices = list(
+        (
+            await db.execute(
+                select(LocationPrice).where(LocationPrice.location_id == int(location.id))
+            )
+        ).scalars().all()
+    )
+    location_price_map = {int(row.service_id): row for row in existing_location_prices}
 
     updated = 0
     for entry in entries:
@@ -239,7 +276,15 @@ async def update_point_prices(point_name: str, payload: dict, db: AsyncSession =
             continue
 
         price = as_float(entry.get("price", service.base_price or 0), float(service.base_price or 0))
-        service.calculator_schema = _set_point_price(service.calculator_schema, normalized_name, price)
+
+        location_price_row = location_price_map.get(service_id)
+        if location_price_row is None:
+            location_price_row = LocationPrice(location_id=int(location.id), service_id=service_id, price=price)
+            db.add(location_price_row)
+            location_price_map[service_id] = location_price_row
+        else:
+            location_price_row.price = price
+
         updated += 1
 
     await db.commit()
@@ -307,8 +352,24 @@ async def calculate_service(service_id: int, payload: dict, db: AsyncSession = D
     if not service:
         return {"ok": False, "error": "service_not_found"}
 
+    payload_data = payload or {}
+    effective_base_price = float(service.base_price or 0)
+    point_name = _normalize_point_name(payload_data.get("point") or payload_data.get("__point") or "")
+    if point_name:
+        location = (await db.execute(select(Location).where(Location.name == point_name))).scalar_one_or_none()
+        if location:
+            location_price = (
+                await db.execute(
+                    select(LocationPrice.price)
+                    .where(LocationPrice.location_id == int(location.id), LocationPrice.service_id == int(service.id))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if location_price is not None:
+                effective_base_price = float(location_price)
+
     schema = service.calculator_schema or {}
-    total, breakdown = _calculate_total_with_breakdown(float(service.base_price or 0), schema, payload or {})
+    total, breakdown = _calculate_total_with_breakdown(effective_base_price, schema, payload_data)
     rounding = int(as_float(schema.get("round_to", 2), 2))
     precision = max(rounding, 0)
 

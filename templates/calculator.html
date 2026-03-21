@@ -82,8 +82,18 @@
     const phoneInput = document.getElementById('calc-client-phone');
     const nameInput = document.getElementById('calc-client-name');
     const phoneSuggestions = document.getElementById('calc-client-phone-suggestions');
+    const pageRoot = document.querySelector('.calc-pos-page');
 
     let clientTimer = null;
+
+    function showToast(text, tone) {
+        if (!pageRoot) return;
+        const toast = document.createElement('div');
+        toast.className = tone === 'error' ? 'alert alert-danger py-2 px-3 mb-2' : 'alert alert-success py-2 px-3 mb-2';
+        toast.textContent = text;
+        pageRoot.prepend(toast);
+        window.setTimeout(function () { toast.remove(); }, 2500);
+    }
 
     function setStatus(text, isError) {
         statusEl.textContent = text || '';
@@ -269,6 +279,7 @@
             const response = await fetch('/api/v1/orders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
                 body: JSON.stringify({
                     client: { name, phone },
                     service_id: serviceId,
@@ -284,12 +295,48 @@
                 }),
             });
 
-            if (!response.ok) throw new Error('order_create_failed');
+            if (response.redirected && String(response.url || '').includes('/login')) {
+                throw new Error('auth_required');
+            }
+
+            if (!response.ok) {
+                let errorMessage = 'Ошибка создания заказа.';
+                try {
+                    const errorData = await response.json();
+                    if (errorData && typeof errorData.detail === 'string' && errorData.detail.trim()) {
+                        errorMessage = errorData.detail;
+                    }
+                } catch (_jsonErr) {
+                    // Ignore JSON parsing errors for non-JSON responses.
+                }
+                throw new Error(errorMessage);
+            }
 
             const data = await response.json();
             setStatus(`Заказ создан: ${data.order_no || data.id}`, false);
-        } catch (_err) {
-            setStatus('Ошибка создания заказа.', true);
+            showToast(`Заказ ${data.order_no || data.id} создан`, 'success');
+
+            phoneInput.value = '';
+            nameInput.value = '';
+            categoryInput.value = '';
+            serviceIdInput.value = '';
+            locationIdInput.value = '';
+            priceInput.value = '0';
+            phoneSuggestions.innerHTML = '';
+
+            document.querySelectorAll('.calc-category-btn').forEach(function (b) { b.classList.remove('active'); });
+            servicesBlock.innerHTML = '<div class="small text-muted">Выберите категорию</div>';
+            locationsBlock.innerHTML = '<div class="small text-muted">Выберите услугу</div>';
+            executorsBlock.innerHTML = '<div class="small text-muted">Выберите точку</div>';
+            updateTotal(0, 'RUB');
+        } catch (err) {
+            if (err && err.message === 'auth_required') {
+                setStatus('Сессия истекла. Обновите страницу и войдите снова.', true);
+                showToast('Требуется повторный вход', 'error');
+            } else {
+                setStatus(err && err.message ? err.message : 'Ошибка создания заказа.', true);
+                showToast('Не удалось создать заказ', 'error');
+            }
         } finally {
             updateCanSubmit();
         }

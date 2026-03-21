@@ -3,6 +3,9 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-geo-alt me-2"></i>Точки и мастера</h4>
+    <a href="/admin/executors" class="btn btn-outline-primary btn-sm">
+        <i class="bi bi-people me-1"></i>Экран мастеров
+    </a>
 </div>
 
 <div class="card border-0 shadow-sm mb-3">
@@ -14,6 +17,34 @@
             </div>
             <div class="col-12 col-md-3 col-lg-2 d-grid">
                 <button type="submit" class="btn btn-primary">Добавить точку</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <form method="post" action="/admin/executors/create" class="row g-2 align-items-end">
+            <input type="hidden" name="return_to" value="/admin/locations">
+            <div class="col-12 col-md-4 col-lg-3">
+                <label class="form-label mb-1">Новый мастер</label>
+                <input type="text" name="name" class="form-control" placeholder="Имя мастера" required>
+            </div>
+            <div class="col-12 col-md-4 col-lg-3">
+                <label class="form-label mb-1">Точка</label>
+                <select name="location_id" class="form-select">
+                    <option value="">Без точки</option>
+                    {% for location in locations %}
+                    <option value="{{ location.id }}">{{ location.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-md-2 col-lg-2">
+                <label class="form-label mb-1">Лимит задач</label>
+                <input type="number" name="max_active_tasks" class="form-control" min="1" max="100" value="10">
+            </div>
+            <div class="col-12 col-md-2 col-lg-2 d-grid">
+                <button type="submit" class="btn btn-primary">Добавить мастера</button>
             </div>
         </form>
     </div>
@@ -67,17 +98,27 @@
                 <thead class="table-light">
                     <tr>
                         <th>Мастер</th>
+                        <th>Статус</th>
                         <th>Текущая загрузка</th>
                         <th>Точка</th>
+                        <th class="text-end">Действие</th>
                     </tr>
                 </thead>
                 <tbody>
                 {% for executor in executors %}
                     <tr>
                         <td>{{ executor.name }}</td>
+                        <td>
+                            {% if executor.is_active %}
+                            <span class="badge bg-success">Активен</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Отключен</span>
+                            {% endif %}
+                        </td>
                         <td>{{ executor.current_active_tasks }}/{{ executor.max_active_tasks }}</td>
                         <td>
                             <form method="post" action="/admin/executors/{{ executor.id }}/location" class="d-flex gap-2">
+                                <input type="hidden" name="return_to" value="/admin/locations">
                                 <select name="location_id" class="form-select form-select-sm">
                                     <option value="">Без точки</option>
                                     {% for location in locations %}
@@ -87,9 +128,17 @@
                                 <button type="submit" class="btn btn-sm btn-outline-primary">Сохранить</button>
                             </form>
                         </td>
+                        <td class="text-end">
+                            <form method="post" action="/admin/executors/{{ executor.id }}/toggle" class="d-inline">
+                                <input type="hidden" name="return_to" value="/admin/locations">
+                                <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                    {% if executor.is_active %}Отключить{% else %}Включить{% endif %}
+                                </button>
+                            </form>
+                        </td>
                     </tr>
                 {% else %}
-                    <tr><td colspan="3" class="text-muted">Нет мастеров.</td></tr>
+                    <tr><td colspan="5" class="text-muted">Нет мастеров.</td></tr>
                 {% endfor %}
                 </tbody>
             </table>

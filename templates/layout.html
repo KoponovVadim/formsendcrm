@@ -38,10 +38,28 @@
                     </a>
                 </li>
                 {% endfor %}
-                {% if user.is_superuser %}
+                {% set perms = user.role.permissions if user.role and user.role.permissions else none %}
+                {% set can_manage_services_menu = user.is_superuser %}
+                {% if not can_manage_services_menu %}
+                    {% if perms is none %}
+                        {% set can_manage_services_menu = true %}
+                    {% elif 'v2_services_manage' in perms %}
+                        {% set can_manage_services_menu = perms.get('v2_services_manage') %}
+                    {% else %}
+                        {% set v2 = perms.get('v2') %}
+                        {% if v2 is mapping and v2.get('services') is mapping and 'manage' in v2.get('services') %}
+                            {% set can_manage_services_menu = v2.get('services').get('manage') %}
+                        {% else %}
+                            {% set can_manage_services_menu = true %}
+                        {% endif %}
+                    {% endif %}
+                {% endif %}
+
+                {% if user.is_superuser or can_manage_services_menu %}
                 <li class="mt-3">
                     <small class="text-uppercase text-secondary px-3">Админ</small>
                 </li>
+                {% if user.is_superuser %}
                 <li>
                     <a href="/admin/" class="nav-link text-white {% if '/admin' in request.url.path %}active{% endif %}">
                         <i class="bi bi-gear me-2"></i>Панель управления
@@ -62,14 +80,20 @@
                         <i class="bi bi-puzzle me-2"></i>Модули
                     </a>
                 </li>
+                {% endif %}
                 <li>
-                    <a href="/admin/services" class="nav-link text-white">
+                    <a href="/admin/services" class="nav-link text-white {% if '/admin/services' in request.url.path %}active{% endif %}">
                         <i class="bi bi-currency-exchange me-2"></i>Услуги и цены
                     </a>
                 </li>
                 <li>
                     <a href="/admin/locations" class="nav-link text-white {% if '/admin/locations' in request.url.path %}active{% endif %}">
                         <i class="bi bi-geo-alt me-2"></i>Точки и мастера
+                    </a>
+                </li>
+                <li>
+                    <a href="/admin/executors" class="nav-link text-white {% if '/admin/executors' in request.url.path %}active{% endif %}">
+                        <i class="bi bi-people me-2"></i>Мастера
                     </a>
                 </li>
                 {% endif %}

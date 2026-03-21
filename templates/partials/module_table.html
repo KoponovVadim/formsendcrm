@@ -16,6 +16,8 @@
             {% set row_status = record.data.get(status_field, '') if status_field else '' %}
             {% set row_bg = row_bg_for_status(row_status) if status_field else '' %}
             {% set partner_issued = record.data.get(partner_issued_field, false) %}
+            {% set partner_issued_normalized = partner_issued|string|lower %}
+            {% set partner_issued_bool = partner_issued is sameas true or partner_issued_normalized in ['true', '1', 'yes', 'on', 'да'] %}
             {% if row_bg %}
             <tr class="record-row {% if row_bg %}status-row--custom{% else %}status-row--default{% endif %}"
                 style="cursor:pointer; --status-row-color: {{ row_bg }};"
@@ -61,16 +63,17 @@
                 {% endif %}
                 {% endfor %}
                 <td onclick="event.stopPropagation()">
-                    {% if status_field and row_status|lower == 'готов' and status_field in editable_fields %}
+                    {% set row_status_normalized = row_status|string|lower %}
+                    {% if status_field and row_status_normalized in ['готов', 'выдан'] and status_field in editable_fields %}
                     <div class="form-check form-switch m-0 d-inline-flex align-items-center">
                         <input class="form-check-input js-partner-issued-checkbox"
                                type="checkbox"
                                data-slug="{{ module.slug }}"
                                data-record-id="{{ record.id }}"
                                data-field="{{ partner_issued_field }}"
-                               {% if partner_issued %}checked{% endif %}>
+                               {% if partner_issued_bool %}checked{% endif %}>
                     </div>
-                    {% elif partner_issued %}
+                    {% elif partner_issued_bool %}
                     <span class="badge text-bg-primary">Отмечено</span>
                     {% else %}
                     <span class="text-muted small">-</span>

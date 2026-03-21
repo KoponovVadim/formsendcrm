@@ -297,6 +297,19 @@
     border: 1px solid #e2e8f0;
 }
 
+.record-edit-field {
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+    padding: 0.75rem;
+    background: #f8fafc;
+}
+
+.record-edit-field .form-control,
+.record-edit-field .form-select,
+.record-edit-field .form-control-plaintext {
+    background: #fff;
+}
+
 /* Smooth transitions */
 * {
     scroll-behavior: smooth;
