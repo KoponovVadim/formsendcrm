@@ -111,9 +111,7 @@ class OrderService:
         return f"ORD-{ts_ms}-{suffix}"
 
     async def _create_and_assign_task(self, order: Order, item: OrderItem, preferred_executor_id: int = 0) -> Task:
-        service = await self.repo.get_service(item.service_id) if item.service_id else None
-        service_category = service.category if service else "repair"
-        executors = await self.repo.active_executors()
+        executors = await self.repo.active_executors(location_id=order.location_id)
 
         selected = None
         score = 0
@@ -124,7 +122,7 @@ class OrderService:
                 score = 100
 
         if not selected:
-            selected, score = choose_best_executor(executors, service_category, order.priority)
+            selected, score = choose_best_executor(executors, order.priority)
 
         task = Task(
             order_id=order.id,

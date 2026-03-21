@@ -77,21 +77,32 @@
                             <label class="form-check-label" for="service-is-active">Активна</label>
                         </div>
                     </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label">Валюта</label>
+                        <input id="service-currency" class="form-control" value="RUB" maxlength="10">
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label">Округление</label>
+                        <input id="service-round-to" type="number" class="form-control" value="2" min="0" max="4" step="1">
+                    </div>
                     <div class="col-12">
-                        <label class="form-label">Схема калькулятора (JSON)</label>
-                        <textarea id="service-schema" class="form-control" rows="14" spellcheck="false">{
-  "currency": "RUB",
-  "round_to": 2,
-  "fields": []
-}</textarea>
-                        <div class="form-text">Можно использовать простой формат для менеджеров: `price` для числового/чекбокс поля и `choices` для списка. Система сама преобразует его в техническую схему.</div>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label mb-0">Поля калькулятора цены</label>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="service-field-add">Добавить поле</button>
+                        </div>
+                        <div id="service-fields-builder" class="vstack gap-2"></div>
+                        <div class="form-text">Поле "часы работы" исключено из визуального редактора.</div>
+                    </div>
+                    <div class="col-12">
+                        <details>
+                            <summary class="small text-muted">Технический JSON (просмотр)</summary>
+                            <textarea id="service-schema-preview" class="form-control mt-2" rows="8" readonly></textarea>
+                        </details>
                     </div>
                     <div class="col-12 d-flex flex-wrap gap-2">
                         <button type="submit" class="btn btn-primary" id="service-save">
                             <i class="bi bi-save me-1"></i>Сохранить
                         </button>
-                        <button type="button" class="btn btn-outline-secondary" id="service-template-simple">Шаблон для менеджера</button>
-                        <button type="button" class="btn btn-outline-secondary" id="service-validate">Проверить JSON</button>
                     </div>
                 </form>
                 <div id="service-editor-status" class="small text-muted mt-2"></div>
@@ -155,8 +166,6 @@
     const reloadBtn = document.getElementById('services-reload');
     const newBtn = document.getElementById('service-new');
     const form = document.getElementById('service-editor-form');
-    const validateBtn = document.getElementById('service-validate');
-    const templateSimpleBtn = document.getElementById('service-template-simple');
     const pointSelect = document.getElementById('point-manager-select');
     const pointNewInput = document.getElementById('point-manager-new');
     const pointAddBtn = document.getElementById('point-manager-add');
@@ -171,28 +180,134 @@
     const categoryInput = document.getElementById('service-category');
     const basePriceInput = document.getElementById('service-base-price');
     const isActiveInput = document.getElementById('service-is-active');
-    const schemaInput = document.getElementById('service-schema');
+    const currencyInput = document.getElementById('service-currency');
+    const roundToInput = document.getElementById('service-round-to');
+    const fieldAddBtn = document.getElementById('service-field-add');
+    const fieldsBuilder = document.getElementById('service-fields-builder');
+    const schemaPreviewInput = document.getElementById('service-schema-preview');
     const editorTitle = document.getElementById('service-editor-title');
 
     let services = [];
-    const SIMPLE_SCHEMA_TEMPLATE = {
-        currency: 'RUB',
-        round_to: 2,
-        minimum_total: 0,
-        fields: [
-            { name: 'hours', label: 'Часы работы', type: 'number', price: 1200 },
-            { name: 'express', label: 'Срочно', type: 'boolean', price: 700 },
-            {
-                name: 'device_type',
-                label: 'Тип устройства',
-                type: 'select',
-                choices: {
-                    phone: 0,
-                    laptop: 900
-                }
+
+    function isHoursFieldName(name) {
+        const normalized = String(name || '').trim().toLowerCase();
+        return normalized === 'hours' || normalized === 'часы' || normalized === 'часы работы';
+    }
+
+    function parseChoicesText(text) {
+        const result = {};
+        String(text || '').split(/\r?\n/).forEach(function (line) {
+            const value = String(line || '').trim();
+            if (!value) return;
+            const parts = value.split(':');
+            const key = String(parts[0] || '').trim();
+            if (!key) return;
+            const price = Number(String(parts.slice(1).join(':') || '0').trim() || 0);
+            result[key] = Number.isNaN(price) ? 0 : price;
+        });
+        return result;
+    }
+
+    function choicesToText(choices) {
+        const source = choices && typeof choices === 'object' && !Array.isArray(choices) ? choices : {};
+        return Object.entries(source).map(function (entry) {
+            return `${entry[0]}:${entry[1]}`;
+        }).join('\n');
+    }
+
+    function collectFieldsFromBuilder() {
+        const fields = [];
+        fieldsBuilder.querySelectorAll('[data-field-row]').forEach(function (row) {
+            const name = String((row.querySelector('.js-field-name') || {}).value || '').trim();
+            const label = String((row.querySelector('.js-field-label') || {}).value || '').trim();
+            const type = String((row.querySelector('.js-field-type') || {}).value || 'number').trim().toLowerCase();
+            const price = Number((row.querySelector('.js-field-price') || {}).value || 0);
+
+            if (!name || isHoursFieldName(name)) return;
+
+            const field = {
+                name,
+                label: label || name,
+                type,
+            };
+
+            if (type === 'select') {
+                const choicesText = String((row.querySelector('.js-field-choices') || {}).value || '');
+                field.choices = parseChoicesText(choicesText);
+            } else {
+                field.price = Number.isNaN(price) ? 0 : price;
             }
-        ]
-    };
+
+            fields.push(field);
+        });
+        return fields;
+    }
+
+    function buildSchemaFromBuilder() {
+        const roundTo = Number(roundToInput.value || 2);
+        return {
+            currency: String(currencyInput.value || 'RUB').trim() || 'RUB',
+            round_to: Number.isNaN(roundTo) ? 2 : Math.max(0, Math.min(4, roundTo)),
+            fields: collectFieldsFromBuilder(),
+        };
+    }
+
+    function refreshSchemaPreview() {
+        schemaPreviewInput.value = JSON.stringify(buildSchemaFromBuilder(), null, 2);
+    }
+
+    function renderFieldsBuilder(fields) {
+        const rows = (Array.isArray(fields) ? fields : []).filter(function (field) {
+            return field && typeof field === 'object' && !isHoursFieldName(field.name);
+        });
+
+        if (!rows.length) {
+            fieldsBuilder.innerHTML = '<div class="small text-muted">Добавьте поля калькулятора.</div>';
+            refreshSchemaPreview();
+            return;
+        }
+
+        fieldsBuilder.innerHTML = rows.map(function (field, index) {
+            const type = String(field.type || 'number').toLowerCase();
+            const price = Number(field.price || 0);
+            const choicesText = choicesToText(field.choices);
+            return `
+                <div class="border rounded p-2" data-field-row="${index}">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-12 col-md-3">
+                            <label class="form-label small mb-1">Ключ</label>
+                            <input class="form-control form-control-sm js-field-name" value="${String(field.name || '')}">
+                        </div>
+                        <div class="col-12 col-md-3">
+                            <label class="form-label small mb-1">Название</label>
+                            <input class="form-control form-control-sm js-field-label" value="${String(field.label || '')}">
+                        </div>
+                        <div class="col-12 col-md-2">
+                            <label class="form-label small mb-1">Тип</label>
+                            <select class="form-select form-select-sm js-field-type">
+                                <option value="number" ${type === 'number' ? 'selected' : ''}>Число</option>
+                                <option value="boolean" ${type === 'boolean' ? 'selected' : ''}>Да/Нет</option>
+                                <option value="select" ${type === 'select' ? 'selected' : ''}>Список</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-2">
+                            <label class="form-label small mb-1">Цена</label>
+                            <input type="number" step="0.01" class="form-control form-control-sm js-field-price" value="${Number.isNaN(price) ? 0 : price}">
+                        </div>
+                        <div class="col-12 col-md-2 d-grid">
+                            <button type="button" class="btn btn-sm btn-outline-danger js-field-remove">Удалить</button>
+                        </div>
+                        <div class="col-12 js-choices-wrap" style="${type === 'select' ? '' : 'display:none;'}">
+                            <label class="form-label small mb-1">Опции (по строкам, формат ключ:цена)</label>
+                            <textarea class="form-control form-control-sm js-field-choices" rows="3">${choicesText}</textarea>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        refreshSchemaPreview();
+    }
 
     function setStatus(text, isError) {
         statusEl.textContent = text || '';
@@ -215,15 +330,11 @@
     }
 
     function parseSchemaOrThrow() {
-        try {
-            const parsed = JSON.parse(schemaInput.value || '{}');
-            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-                throw new Error('schema_not_object');
-            }
-            return parsed;
-        } catch (_err) {
-            throw new Error('invalid_json');
+        const schema = buildSchemaFromBuilder();
+        if (!Array.isArray(schema.fields)) {
+            throw new Error('invalid_schema');
         }
+        return schema;
     }
 
     function resetForm() {
@@ -233,7 +344,9 @@
         categoryInput.value = 'repair';
         basePriceInput.value = '0';
         isActiveInput.checked = true;
-        schemaInput.value = JSON.stringify({ currency: 'RUB', round_to: 2, fields: [] }, null, 2);
+        currencyInput.value = 'RUB';
+        roundToInput.value = '2';
+        renderFieldsBuilder([]);
         editorTitle.textContent = 'Новая услуга';
         setEditorStatus('', false);
     }
@@ -245,7 +358,10 @@
         categoryInput.value = service.category || 'repair';
         basePriceInput.value = Number(service.base_price || 0);
         isActiveInput.checked = Boolean(service.is_active);
-        schemaInput.value = JSON.stringify(service.calculator_schema || {}, null, 2);
+        const schema = service.calculator_schema || {};
+        currencyInput.value = String(schema.currency || 'RUB');
+        roundToInput.value = Number(schema.round_to || 2);
+        renderFieldsBuilder(Array.isArray(schema.fields) ? schema.fields : []);
         editorTitle.textContent = `Редактирование #${service.id}`;
         setEditorStatus('', false);
     }
@@ -539,20 +655,37 @@
     newBtn.addEventListener('click', resetForm);
     form.addEventListener('submit', saveService);
 
-    validateBtn.addEventListener('click', function () {
-        try {
-            const parsed = parseSchemaOrThrow();
-            schemaInput.value = JSON.stringify(parsed, null, 2);
-            setEditorStatus('JSON корректен.', false);
-        } catch (_err) {
-            setEditorStatus('Ошибка JSON: проверьте формат схемы.', true);
-        }
+    fieldAddBtn.addEventListener('click', function () {
+        const rows = collectFieldsFromBuilder();
+        rows.push({ name: '', label: '', type: 'number', price: 0 });
+        renderFieldsBuilder(rows);
     });
 
-    templateSimpleBtn.addEventListener('click', function () {
-        schemaInput.value = JSON.stringify(SIMPLE_SCHEMA_TEMPLATE, null, 2);
-        setEditorStatus('Подставлен упрощенный шаблон для менеджера.', false);
+    fieldsBuilder.addEventListener('click', function (event) {
+        const removeBtn = event.target.closest('.js-field-remove');
+        if (!removeBtn) return;
+        const row = removeBtn.closest('[data-field-row]');
+        if (!row) return;
+        const idx = Number(row.dataset.fieldRow || -1);
+        const rows = collectFieldsFromBuilder().filter(function (_field, i) { return i !== idx; });
+        renderFieldsBuilder(rows);
     });
+
+    fieldsBuilder.addEventListener('change', function (event) {
+        const select = event.target.closest('.js-field-type');
+        if (select) {
+            const row = select.closest('[data-field-row]');
+            const choicesWrap = row ? row.querySelector('.js-choices-wrap') : null;
+            if (choicesWrap) {
+                choicesWrap.style.display = select.value === 'select' ? '' : 'none';
+            }
+        }
+        refreshSchemaPreview();
+    });
+
+    fieldsBuilder.addEventListener('input', refreshSchemaPreview);
+    currencyInput.addEventListener('input', refreshSchemaPreview);
+    roundToInput.addEventListener('input', refreshSchemaPreview);
 
     pointSelect.addEventListener('change', function () {
         loadPointPrices((pointSelect.value || '').trim());

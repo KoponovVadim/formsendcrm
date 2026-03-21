@@ -97,20 +97,11 @@ class CRMRepository:
         stmt = (
             select(Executor)
             .where(Executor.is_active == True, Executor.location_id == location_id)
-            .options(selectinload(Executor.skills))
             .order_by(Executor.current_active_tasks.asc(), Executor.name.asc())
         )
 
         executors = list((await self.db.execute(stmt)).scalars().all())
-        if not category:
-            return executors
-
-        result = []
-        for executor in executors:
-            has_category = any(str(skill.service_category or "") == str(category) for skill in (executor.skills or []))
-            if has_category:
-                result.append(executor)
-        return result
+        return executors
 
     async def get_location_price(self, location_id: int, service_id: int) -> float | None:
         value = (
@@ -147,8 +138,10 @@ class CRMRepository:
         )
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
-    async def active_executors(self) -> list[Executor]:
-        stmt = select(Executor).where(Executor.is_active == True).options(selectinload(Executor.skills))
+    async def active_executors(self, location_id: int | None = None) -> list[Executor]:
+        stmt = select(Executor).where(Executor.is_active == True)
+        if location_id is not None and int(location_id or 0) > 0:
+            stmt = stmt.where(Executor.location_id == int(location_id))
         return list((await self.db.execute(stmt)).scalars().all())
 
     async def open_tasks_count(self, executor_id: int) -> int:
