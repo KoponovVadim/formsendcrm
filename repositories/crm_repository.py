@@ -38,11 +38,12 @@ class CRMRepository:
         stmt = stmt.order_by(Service.name.asc()).limit(100)
         return list((await self.db.execute(stmt)).scalars().all())
 
-    async def list_locations_for_service(self, service_id: int) -> list[tuple[Location, float, int, list[dict]]]:
+    async def list_locations_for_service(self, service_id: int) -> list[tuple[Location, float, float, int, list[dict]]]:
         rows = (
             await self.db.execute(
-                select(Location, LocationPrice.price)
+                select(Location, LocationPrice.price, Service.base_price)
                 .join(LocationPrice, LocationPrice.location_id == Location.id)
+                .join(Service, Service.id == LocationPrice.service_id)
                 .where(Location.is_active == True, LocationPrice.service_id == service_id)
                 .order_by(Location.name.asc())
             )
@@ -51,7 +52,7 @@ class CRMRepository:
         if not rows:
             return []
 
-        location_ids = [int(location.id) for location, _ in rows]
+        location_ids = [int(location.id) for location, _, _ in rows]
         active_order_statuses = [
             "new",
             "open",
@@ -79,7 +80,7 @@ class CRMRepository:
                 "price": float(price or 0),
                 "in_work": count_map.get(int(location.id), 0),
             }
-            for location, price in rows
+            for location, price, _ in rows
             if str(location.name or "").strip()
         ]
 
@@ -87,10 +88,11 @@ class CRMRepository:
             (
                 location,
                 float(price or 0),
+                float(base_price or 0),
                 count_map.get(int(location.id), 0),
                 all_partner_prices,
             )
-            for location, price in rows
+            for location, price, base_price in rows
         ]
 
     async def list_executors_for_location_and_category(self, location_id: int, category: str) -> list[Executor]:

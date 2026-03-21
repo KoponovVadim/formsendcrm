@@ -1,5 +1,5 @@
 {% if rows %}
-{% set partner_prices = rows[0][3] %}
+{% set partner_prices = rows[0][4] %}
 {% if partner_prices %}
 <div class="mb-2 p-2 border rounded bg-light">
     <div class="small fw-semibold mb-1">Партнерские цены по позиции</div>
@@ -9,10 +9,11 @@
 </div>
 {% endif %}
 <div class="calc-locations-grid">
-    {% for location, price, orders_count, partner_prices in rows %}
-    <button type="button" class="btn btn-outline-dark text-start calc-location-btn" data-location-id="{{ location.id }}" data-price="{{ price }}">
+    {% for location, point_price, own_price, orders_count, partner_prices in rows %}
+    <button type="button" class="btn btn-outline-dark text-start calc-location-btn" data-location-id="{{ location.id }}" data-price="{{ point_price }}">
         <div class="fw-semibold">{{ location.name }}</div>
-        <div class="small fw-semibold">Наша цена: {{ price }} RUB</div>
+        <div class="small fw-semibold">Цена точки: {{ point_price }} RUB</div>
+        <div class="small text-muted">Наша цена: {{ own_price }} RUB</div>
         <div class="small text-muted">В работе: {{ orders_count }}</div>
     </button>
     {% endfor %}

@@ -227,6 +227,7 @@ async def get_point_prices(point_name: str, db: AsyncSession = Depends(get_db), 
                 "name": service.name,
                 "category": service.category,
                 "price": float(location_price_map.get(int(service.id), float(service.base_price or 0))),
+                "own_price": float(service.base_price or 0),
                 "base_price": float(service.base_price or 0),
                 "partner_prices": service_partner_prices,
             }

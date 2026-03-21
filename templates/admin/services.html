@@ -29,7 +29,7 @@
                                 <th>Slug</th>
                                 <th>Название</th>
                                 <th>Категория</th>
-                                <th>База</th>
+                                <th>Наша цена</th>
                                 <th>Статус</th>
                             </tr>
                         </thead>
@@ -68,7 +68,7 @@
                         <input id="service-name" class="form-control" required maxlength="255">
                     </div>
                     <div class="col-12 col-md-6">
-                        <label class="form-label">Базовая цена</label>
+                        <label class="form-label">Наша цена (базовая)</label>
                         <input id="service-base-price" type="number" step="0.01" class="form-control" required>
                     </div>
                     <div class="col-12 col-md-6 d-flex align-items-end">
@@ -131,7 +131,7 @@
                             <tr>
                                 <th>Услуга</th>
                                 <th>Категория</th>
-                                <th>База</th>
+                                <th>Наша цена</th>
                                 <th>Цена точки</th>
                             </tr>
                         </thead>
@@ -405,11 +405,12 @@
         }
 
         pointPricesTableBody.innerHTML = pointPrices.map(function (item) {
+            const ownPrice = Number(item.own_price ?? item.base_price ?? 0);
             return `
                 <tr>
                     <td>${item.name || ''}</td>
                     <td>${item.category || ''}</td>
-                    <td>${formatMoney(item.base_price)} RUB</td>
+                    <td>${formatMoney(ownPrice)} RUB</td>
                     <td style="max-width: 220px;">
                         <input
                             type="number"
