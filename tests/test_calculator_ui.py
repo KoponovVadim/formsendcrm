@@ -4,6 +4,7 @@ from typing import Any, AsyncGenerator
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from api.orders import router as orders_router
 from app.auth import get_current_user
@@ -126,6 +127,45 @@ async def test_point_detail_page_contains_orders_executors_and_prices(db_session
     assert "Точка: Point Detail" in html
     assert "Point Detail Master" in html
     assert "Point detail service" in html
+
+
+@pytest.mark.asyncio
+async def test_point_detail_page_allows_price_edit(db_session: Any):
+    app = FastAPI()
+    app.include_router(calculator_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=12, is_superuser=True, role=SimpleNamespace(permissions={}), specialization="")
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    service = Service(slug="point-edit-service", name="Point edit service", category="repair", is_active=True, base_price=900, calculator_schema={"fields": []})
+    point = Location(name="Point Edit", is_active=True)
+    db_session.add_all([service, point])
+    await db_session.flush()
+    db_session.add(LocationPrice(location_id=point.id, service_id=service.id, price=1000))
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client:
+        save_response = await client.post(
+            f"/points/{point.id}/prices",
+            data={f"price_{service.id}": "1234"},
+        )
+
+    assert save_response.status_code == 302
+    assert save_response.headers.get("location") == f"/points/{point.id}?saved=1"
+
+    updated = (
+        await db_session.execute(
+            select(LocationPrice).where(LocationPrice.location_id == point.id, LocationPrice.service_id == service.id)
+        )
+    ).scalar_one_or_none()
+    assert updated is not None
+    assert float(updated.price or 0) == 1234
 
 
 @pytest.mark.asyncio

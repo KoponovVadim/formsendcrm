@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import filter_visible_modules_for_user, get_current_user, get_services_access_scope
+from app.auth import can_manage_services, filter_visible_modules_for_user, get_current_user, get_services_access_scope
 from app.database import get_db
 from app.schema_loader import get_all_modules
 from models.crm import Client, Executor, Location, LocationPrice, Order, Service
@@ -12,6 +12,17 @@ from repositories.crm_repository import CRMRepository
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
+
+
+def _can_access_point_prices(user, location_name: str) -> bool:
+    if user.is_superuser:
+        return True
+    if can_manage_services(user):
+        return True
+
+    scope = get_services_access_scope(user)
+    allowed_points = scope.get("allowed_points") or []
+    return str(location_name or "") in allowed_points
 
 
 @router.get("/calculator", response_class=HTMLResponse)
@@ -132,10 +143,10 @@ async def point_detail_page(
     if not location:
         raise HTTPException(status_code=404, detail="point_not_found")
 
-    scope = get_services_access_scope(user)
-    allowed_points = scope.get("allowed_points") or []
-    if allowed_points and str(location.name or "") not in allowed_points and not user.is_superuser:
+    if not _can_access_point_prices(user, str(location.name or "")):
         raise HTTPException(status_code=403, detail="point_access_denied")
+
+    scope = get_services_access_scope(user)
 
     orders = (
         await db.execute(
@@ -177,3 +188,62 @@ async def point_detail_page(
             "show_own_price": not bool(scope.get("hide_own_price")),
         },
     )
+
+
+@router.post("/points/{location_id}/prices")
+async def point_detail_prices_update(
+    location_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    location = (await db.execute(select(Location).where(Location.id == int(location_id)))).scalar_one_or_none()
+    if not location:
+        raise HTTPException(status_code=404, detail="point_not_found")
+
+    if not _can_access_point_prices(user, str(location.name or "")):
+        raise HTTPException(status_code=403, detail="point_access_denied")
+
+    form = await request.form()
+
+    existing_rows = (
+        await db.execute(
+            select(LocationPrice).where(LocationPrice.location_id == int(location.id))
+        )
+    ).scalars().all()
+    rows_by_service = {int(row.service_id): row for row in existing_rows}
+
+    changed = False
+    for key, value in form.items():
+        if not str(key).startswith("price_"):
+            continue
+
+        raw_service_id = str(key)[6:]
+        if not raw_service_id.isdigit():
+            continue
+        service_id = int(raw_service_id)
+
+        raw_price = str(value or "").replace(",", ".").strip()
+        try:
+            parsed_price = float(raw_price) if raw_price else 0.0
+        except ValueError:
+            continue
+
+        row = rows_by_service.get(service_id)
+        if row is None:
+            db.add(
+                LocationPrice(
+                    location_id=int(location.id),
+                    service_id=service_id,
+                    price=parsed_price,
+                )
+            )
+            changed = True
+        elif float(row.price or 0) != parsed_price:
+            row.price = parsed_price
+            changed = True
+
+    if changed:
+        await db.commit()
+
+    return RedirectResponse(f"/points/{location_id}?saved=1", status_code=302)
