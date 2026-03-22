@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.events import event_bus
 from models.crm import Order, OrderItem, Task
 from repositories.crm_repository import CRMRepository
+from services.order_backup_service import mirror_order_to_dynamic_modules
 from services.assignment_service import choose_best_executor
 from services.audit_service import write_audit
 
@@ -37,6 +38,8 @@ class OrderService:
         await self.db.flush()
 
         preferred_executor_id = int(payload.get("preferred_executor_id", 0) or 0)
+        first_item_title = ""
+        assigned_master_name = ""
 
         total = Decimal("0")
         for item_payload in payload.get("items", []):
@@ -87,11 +90,19 @@ class OrderService:
             self.db.add(item)
             await self.db.flush()
 
-            await self._create_and_assign_task(
+            if not first_item_title:
+                first_item_title = str(item.title or "")
+
+            task = await self._create_and_assign_task(
                 order=order,
                 item=item,
                 preferred_executor_id=preferred_executor_id,
             )
+            if task and task.executor_id and not assigned_master_name:
+                executors = await self.repo.active_executors(location_id=order.location_id)
+                selected = next((executor for executor in executors if int(executor.id) == int(task.executor_id)), None)
+                if selected:
+                    assigned_master_name = str(selected.name or "")
 
         order.total_amount = total
 
@@ -104,6 +115,21 @@ class OrderService:
             before_data={},
             after_data={"order_no": order.order_no, "status": order.status, "total_amount": str(order.total_amount)},
         )
+
+        issue_text = str((payload.get("comment") or payload.get("issue") or "")).strip()
+        await mirror_order_to_dynamic_modules(
+            self.db,
+            order_no=str(order.order_no),
+            accepted_at=getattr(order, "created_at", None),
+            client_name=str(client.name or ""),
+            client_phone=str(client.phone or ""),
+            device_name=first_item_title,
+            issue_text=issue_text,
+            master_name=assigned_master_name,
+            status=str(order.status or "new"),
+            warranty_until=str(payload.get("warranty_until") or ""),
+        )
+
         await self.db.commit()
 
         await event_bus.publish("orders", {"type": "order_created", "order_id": order.id, "order_no": order.order_no})

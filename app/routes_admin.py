@@ -824,3 +824,23 @@ async def sync_pull_module(
     if request.headers.get("HX-Request"):
         return HTMLResponse(f'<div class="alert alert-info">{result["message"]}</div>')
     return RedirectResponse("/admin/", status_code=302)
+
+
+@router.post("/sync/push/{slug}", response_class=HTMLResponse)
+async def sync_push_module(
+    request: Request,
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_admin(user)
+    from app.schema_loader import get_module_by_slug
+
+    module = await get_module_by_slug(db, slug)
+    if not module:
+        raise HTTPException(404)
+
+    result = await sync_service.push_module(db, module)
+    if request.headers.get("HX-Request"):
+        return HTMLResponse(f'<div class="alert alert-info">{result["message"]}</div>')
+    return RedirectResponse("/admin/", status_code=302)

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from sqlalchemy import select
 
 from app.auth import get_current_user
+from app.models import DynamicRecord, ModuleConfig
 from models.crm import Executor, ExecutorSkill, Location, LocationPrice, Service
 from models.omnichannel import Conversation, Message
 
@@ -402,6 +403,86 @@ async def test_orders_create_endpoint_smoke_from_calculator_payload(async_client
     assert isinstance(payload.get("id"), int)
     assert str(payload.get("order_no", "")).startswith("ORD-")
     assert payload.get("status") == "new"
+
+
+async def test_orders_create_mirrors_to_orders_and_clients_modules(async_client, db_session):
+    db_session.add_all([
+        ModuleConfig(
+            slug="orders",
+            sheet_name="Заказы",
+            display_name="Заказы",
+            icon="bi-clipboard-check",
+            enabled=True,
+            fields_schema=[
+                {"name": "№ заказа", "type": "TEXT"},
+                {"name": "Дата приёма", "type": "DATE"},
+                {"name": "Клиент", "type": "TEXT"},
+                {"name": "Устройство", "type": "TEXT"},
+                {"name": "Неисправность", "type": "TEXT"},
+                {"name": "Мастер", "type": "TEXT"},
+                {"name": "Гарантия до", "type": "TEXT"},
+                {"name": "Статус", "type": "TEXT"},
+            ],
+            sort_order=0,
+        ),
+        ModuleConfig(
+            slug="clients",
+            sheet_name="Клиенты",
+            display_name="Клиенты",
+            icon="bi-people",
+            enabled=True,
+            fields_schema=[
+                {"name": "№ заказа", "type": "TEXT"},
+                {"name": "ФИО название", "type": "TEXT"},
+                {"name": "Телефон", "type": "TEXT"},
+                {"name": "Примечание", "type": "TEXT"},
+            ],
+            sort_order=1,
+        ),
+    ])
+
+    service = Service(
+        slug="mirror-service",
+        name="Mirror Service",
+        category="repair",
+        is_active=True,
+        base_price=100,
+        calculator_schema={"fields": []},
+    )
+    location = Location(name="Mirror Point", is_active=True)
+    db_session.add_all([service, location])
+    await db_session.flush()
+    db_session.add(LocationPrice(location_id=location.id, service_id=service.id, price=135))
+    await db_session.commit()
+
+    response = await async_client.post(
+        "/api/v1/orders",
+        json={
+            "client": {"name": "Mirror Client", "phone": "79991112233"},
+            "service_id": service.id,
+            "location_id": location.id,
+            "comment": "screen issue",
+            "items": [{"service_id": service.id, "quantity": 1, "unit_price": 135}],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    order_no = str(payload.get("order_no", ""))
+
+    orders_records = (
+        await db_session.execute(select(DynamicRecord).where(DynamicRecord.module_slug == "orders"))
+    ).scalars().all()
+    clients_records = (
+        await db_session.execute(select(DynamicRecord).where(DynamicRecord.module_slug == "clients"))
+    ).scalars().all()
+
+    assert len(orders_records) == 1
+    assert len(clients_records) == 1
+    assert orders_records[0].data.get("№ заказа") == order_no
+    assert orders_records[0].data.get("Клиент") == "Mirror Client"
+    assert clients_records[0].data.get("№ заказа") == order_no
+    assert clients_records[0].data.get("Телефон") == "79991112233"
 
 
 async def test_catalog_point_prices_auto_collect_partner_prices_from_points(async_client, db_session):

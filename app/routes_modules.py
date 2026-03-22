@@ -464,6 +464,17 @@ async def record_create(
     db.add(record)
     await db.commit()
 
+    try:
+        from app.sync_service import push_single_record, push_module
+        await push_single_record(db, module, record)
+    except Exception:
+        try:
+            # Fallback for row append/update mismatches.
+            from app.sync_service import push_module
+            await push_module(db, module)
+        except Exception:
+            pass
+
     if request.headers.get("HX-Request"):
         return HTMLResponse(status_code=200, headers={"HX-Redirect": f"/modules/{slug}"})
 
