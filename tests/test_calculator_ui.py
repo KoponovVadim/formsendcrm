@@ -294,3 +294,59 @@ async def test_calculator_executors_uses_orders_panel_load_not_stale_counter(db_
     html = response.text
     assert "Load Master (1/10)" in html
     assert "Load Master (99/10)" not in html
+
+
+@pytest.mark.asyncio
+async def test_calculator_locations_in_work_uses_live_orders_and_real_points_only(db_session: Any):
+    app = FastAPI()
+    app.include_router(calculator_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=15, is_superuser=True, role=SimpleNamespace(permissions={}), specialization="")
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    service = Service(slug="calc-live-orders", name="Calc live orders", category="repair", is_active=True, base_price=1000, calculator_schema={"fields": []})
+    point_a = Location(name="Point A", is_active=True)
+    point_b = Location(name="Point B", is_active=True)
+    db_session.add_all([service, point_a, point_b])
+    await db_session.flush()
+
+    db_session.add_all([
+        LocationPrice(location_id=point_a.id, service_id=service.id, price=1500),
+        LocationPrice(location_id=point_b.id, service_id=service.id, price=1700),
+    ])
+
+    db_session.add(
+        ModuleConfig(
+            slug="orders",
+            sheet_name="Заказы",
+            display_name="Заказы",
+            icon="bi-clipboard-check",
+            enabled=True,
+            fields_schema=[
+                {"name": "№ заказа", "type": "TEXT"},
+                {"name": "Точка", "type": "TEXT"},
+                {"name": "Статус", "type": "TEXT"},
+            ],
+            sort_order=0,
+        )
+    )
+    db_session.add_all([
+        DynamicRecord(module_slug="orders", row_index=2, data={"№ заказа": "ORD-1", "Точка": "Point A", "Статус": "В работе"}),
+        DynamicRecord(module_slug="orders", row_index=3, data={"№ заказа": "ORD-2", "Точка": "Point A", "Статус": "Выдан"}),
+        DynamicRecord(module_slug="orders", row_index=4, data={"№ заказа": "ORD-3", "Точка": "Ghost Point", "Статус": "В работе"}),
+    ])
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get(f"/calculator/locations?service_id={service.id}")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Point A - 1500.0 RUB, в работе: 1" in html
+    assert "Point B - 1700.0 RUB, в работе: 0" in html

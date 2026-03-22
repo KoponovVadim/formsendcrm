@@ -6,6 +6,25 @@ from app.models import DynamicRecord, ModuleConfig
 from models.crm import Client, Executor, Location, LocationPrice, Order, OrderItem, Service, Task
 
 
+ACTIVE_ORDER_STATUSES = {
+    "принят",
+    "ожидает курьера",
+    "в пути в цо",
+    "в ремонте",
+    "готов к отправке",
+    "в пути в точку выдачи",
+    "готов к выдаче",
+    "новый",
+    "new",
+    "open",
+    "assigned",
+    "in_progress",
+    "в работе",
+    "ожидание",
+    "готов",
+}
+
+
 class CRMRepository:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
@@ -64,33 +83,7 @@ class CRMRepository:
             return []
 
         location_ids = [int(location.id) for location, _, _ in rows]
-        active_order_statuses = [
-            "принят",
-            "ожидает курьера",
-            "в пути в цо",
-            "в ремонте",
-            "готов к отправке",
-            "в пути в точку выдачи",
-            "готов к выдаче",
-            "new",
-            "open",
-            "assigned",
-            "in_progress",
-            "в работе",
-            "ожидание",
-            "готов",
-        ]
-        counts = (
-            await self.db.execute(
-                select(Order.location_id, func.count(Order.id))
-                .where(
-                    Order.location_id.in_(location_ids),
-                    func.lower(func.coalesce(Order.status, "")).in_(active_order_statuses),
-                )
-                .group_by(Order.location_id)
-            )
-        ).all()
-        count_map = {int(location_id): int(total) for location_id, total in counts}
+        count_map = await self._get_live_orders_count_by_location(location_ids)
 
         live_executor_load_by_location = await self._get_live_executor_load_by_location(location_ids)
 
@@ -278,24 +271,6 @@ class CRMRepository:
         else:
             available_names = None
 
-        active_statuses = {
-            "принят",
-            "ожидает курьера",
-            "в пути в цо",
-            "в ремонте",
-            "готов к отправке",
-            "в пути в точку выдачи",
-            "готов к выдаче",
-            "новый",
-            "new",
-            "open",
-            "assigned",
-            "in_progress",
-            "в работе",
-            "ожидание",
-            "готов",
-        }
-
         load_by_name: dict[str, int] = {}
         for record in records:
             data = record.data or {}
@@ -307,12 +282,70 @@ class CRMRepository:
 
             if status_field:
                 status = str(data.get(status_field, "")).strip().lower()
-                if status and status not in active_statuses:
+                if status and status not in ACTIVE_ORDER_STATUSES:
                     continue
 
             load_by_name[master_name] = int(load_by_name.get(master_name, 0)) + 1
 
         return load_by_name
+
+    async def _get_live_orders_count_by_location(self, location_ids: list[int]) -> dict[int, int]:
+        if not location_ids:
+            return {}
+
+        locations = (
+            await self.db.execute(
+                select(Location).where(Location.id.in_(location_ids))
+            )
+        ).scalars().all()
+        location_name_to_id = {
+            str(location.name or "").strip().lower(): int(location.id)
+            for location in locations
+            if str(location.name or "").strip()
+        }
+
+        orders_module = (
+            await self.db.execute(select(ModuleConfig).where(ModuleConfig.slug == "orders"))
+        ).scalar_one_or_none()
+        if not orders_module:
+            return {}
+
+        fields_schema = orders_module.fields_schema or []
+        field_names = [str(field.get("name", "")).strip() for field in fields_schema if isinstance(field, dict)]
+        location_field = self._find_field_name(field_names, ["Точка", "Точка выдачи", "Пункт", "ПВЗ", "Партнер", "Партнёр", "Локация"]) 
+        status_field = self._find_field_name(field_names, ["Статус"])
+        if not location_field or not status_field:
+            return {}
+
+        records = (
+            await self.db.execute(select(DynamicRecord).where(DynamicRecord.module_slug == "orders"))
+        ).scalars().all()
+
+        count_map: dict[int, int] = {int(location_id): 0 for location_id in location_ids}
+        sorted_location_names = sorted(location_name_to_id.keys(), key=len, reverse=True)
+
+        for record in records:
+            data = record.data or {}
+            status = str(data.get(status_field, "")).strip().lower()
+            if status and status not in ACTIVE_ORDER_STATUSES:
+                continue
+
+            raw_location = str(data.get(location_field, "")).strip().lower()
+            if not raw_location:
+                continue
+
+            location_id = location_name_to_id.get(raw_location)
+            if location_id is None:
+                for location_name in sorted_location_names:
+                    if location_name in raw_location:
+                        location_id = location_name_to_id[location_name]
+                        break
+            if location_id is None or int(location_id) not in count_map:
+                continue
+
+            count_map[int(location_id)] = int(count_map.get(int(location_id), 0)) + 1
+
+        return count_map
 
     @staticmethod
     def _find_field_name(field_names: list[str], candidates: list[str]) -> str | None:

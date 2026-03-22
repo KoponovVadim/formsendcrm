@@ -36,6 +36,10 @@
         </div>
         {% endfor %}
         </div>
+
+        {% if module.slug == 'orders' and order_no %}
+        {% include "partials/order_supplies_section.html" %}
+        {% endif %}
     </div>
     <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>

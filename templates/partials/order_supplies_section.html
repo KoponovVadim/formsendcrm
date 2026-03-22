@@ -1,0 +1,76 @@
+<div id="order-supplies-section">
+    <hr class="my-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0">Расходники по заказу {{ order_no }}</h6>
+        <span class="badge bg-secondary">Сумма: {{ '%.2f'|format(order_supplies_total) }}</span>
+    </div>
+
+    {% if supply_add_success %}
+    <div class="alert alert-success">{{ supply_add_success }}</div>
+    {% endif %}
+    {% if supply_add_error %}
+    <div class="alert alert-danger">{{ supply_add_error }}</div>
+    {% endif %}
+
+    {% if order_supplies %}
+    <div class="table-responsive mb-3">
+        <table class="table table-sm align-middle">
+            <thead>
+                <tr>
+                    <th scope="col">#</th>
+                    <th scope="col">Дата</th>
+                    <th scope="col">Наименование</th>
+                    <th scope="col">Происхождение</th>
+                    <th scope="col" class="text-end">Стоимость</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for supply in order_supplies %}
+                <tr>
+                    <td>{{ supply.row_index }}</td>
+                    <td>{{ supply.date }}</td>
+                    <td>{{ supply.name }}</td>
+                    <td>{{ supply.origin }}</td>
+                    <td class="text-end">{{ '%.2f'|format(supply.cost) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="alert alert-light border">Для этого заказа пока нет привязанных расходников.</div>
+    {% endif %}
+
+    <div class="card border-0 bg-light">
+        <div class="card-body">
+            <h6 class="card-title">Добавить расходник</h6>
+            <form hx-post="/modules/orders/record/{{ record.id }}/supplies"
+                  hx-target="#order-supplies-section"
+                  hx-swap="outerHTML"
+                  class="row g-2">
+                <div class="col-12 col-md-4">
+                    <label class="form-label small mb-1">Дата покупки</label>
+                    <input type="date" class="form-control" name="supply_date">
+                </div>
+                <div class="col-12 col-md-8">
+                    <label class="form-label small mb-1">Наименование расходника</label>
+                    <input type="text" class="form-control" name="supply_name" required>
+                </div>
+                <div class="col-12 col-md-4">
+                    <label class="form-label small mb-1">Стоимость</label>
+                    <input type="text" class="form-control" name="supply_cost" placeholder="0.00">
+                </div>
+                <div class="col-12 col-md-8">
+                    <label class="form-label small mb-1">Происхождение</label>
+                    <input type="text" class="form-control" name="supply_origin"
+                           value="Заказ {{ order_no }}">
+                </div>
+                <div class="col-12">
+                    <button type="submit" class="btn btn-outline-primary btn-sm">
+                        <i class="bi bi-plus-lg me-1"></i>Добавить расходник
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>

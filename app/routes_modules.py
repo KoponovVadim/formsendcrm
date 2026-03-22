@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func, delete as sa_delete, case, or_, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import re
 
 from app.database import get_db
@@ -47,6 +47,113 @@ DEFAULT_STATUS_COLORS = {
 }
 
 SORT_OPTIONS = {"newest", "oldest", "updated_desc", "updated_asc"}
+
+
+def _find_field_name_by_candidates(field_names: list[str], candidates: list[str]) -> str | None:
+    lowered = {str(name).strip().lower(): name for name in field_names if str(name).strip()}
+
+    for candidate in candidates:
+        key = str(candidate or "").strip().lower()
+        if key in lowered:
+            return lowered[key]
+
+    for candidate in candidates:
+        key = str(candidate or "").strip().lower()
+        for field_name in field_names:
+            if key in str(field_name).strip().lower():
+                return field_name
+
+    return None
+
+
+def _parse_float(value: str | None) -> float:
+    raw = str(value or "").strip().replace(",", ".")
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.0
+
+
+async def _get_order_supplies_context(
+    db: AsyncSession,
+    order_record: DynamicRecord,
+    orders_module: ModuleConfig | None,
+    supplies_module: ModuleConfig | None,
+) -> dict:
+    order_supplies: list[dict] = []
+    order_supplies_total = 0.0
+    order_no = ""
+    supplies_fields: dict[str, str] = {}
+
+    if not orders_module or not supplies_module:
+        return {
+            "order_no": order_no,
+            "order_supplies": order_supplies,
+            "order_supplies_total": order_supplies_total,
+            "supplies_fields": supplies_fields,
+        }
+
+    order_field_names = [f.get("name", "") for f in (orders_module.fields_schema or []) if isinstance(f, dict)]
+    order_field = _find_field_name_by_candidates(order_field_names, ["№ заказа", "номер", "заказ"])
+    order_no = str((order_record.data or {}).get(order_field or "", "")).strip() if order_field else ""
+    if not order_no:
+        return {
+            "order_no": order_no,
+            "order_supplies": order_supplies,
+            "order_supplies_total": order_supplies_total,
+            "supplies_fields": supplies_fields,
+        }
+
+    supplies_field_names = [f.get("name", "") for f in (supplies_module.fields_schema or []) if isinstance(f, dict)]
+    idx_field = _find_field_name_by_candidates(supplies_field_names, ["№ п/п", "номер", "№"])
+    date_field = _find_field_name_by_candidates(supplies_field_names, ["Дата покупки", "дата"])
+    name_field = _find_field_name_by_candidates(supplies_field_names, ["Наименование расходника", "наименование", "расходник"])
+    origin_field = _find_field_name_by_candidates(supplies_field_names, ["Происхождение", "источник", "origin"])
+    cost_field = _find_field_name_by_candidates(supplies_field_names, ["Стоимость", "цена", "себестоимость"])
+    order_ref_field = _find_field_name_by_candidates(supplies_field_names, ["№ заказа", "номер заказа", "заказ"])
+
+    supplies_fields = {
+        "idx": idx_field or "",
+        "date": date_field or "",
+        "name": name_field or "",
+        "origin": origin_field or "",
+        "cost": cost_field or "",
+        "order_ref": order_ref_field or "",
+    }
+
+    supplies_records = (
+        await db.execute(
+            select(DynamicRecord)
+            .where(DynamicRecord.module_slug == "supplies")
+            .order_by(DynamicRecord.row_index.desc())
+        )
+    ).scalars().all()
+
+    for supply_record in supplies_records:
+        data = dict(supply_record.data or {})
+        origin_text = str(data.get(origin_field or "", "")).strip().lower() if origin_field else ""
+        order_ref_text = str(data.get(order_ref_field or "", "")).strip() if order_ref_field else ""
+        if order_ref_text != order_no and (not origin_text or order_no.lower() not in origin_text):
+            continue
+
+        cost_value = _parse_float(str(data.get(cost_field or "", "0")) if cost_field else "0")
+        order_supplies_total += cost_value
+        order_supplies.append(
+            {
+                "row_index": supply_record.row_index,
+                "date": str(data.get(date_field or "", "")).strip() if date_field else "",
+                "name": str(data.get(name_field or "", "")).strip() if name_field else "",
+                "origin": str(data.get(origin_field or "", "")).strip() if origin_field else "",
+                "cost": cost_value,
+            }
+        )
+
+    return {
+        "order_no": order_no,
+        "order_supplies": order_supplies,
+        "order_supplies_total": order_supplies_total,
+        "supplies_fields": supplies_fields,
+    }
 
 
 def _status_key(value: str) -> str:
@@ -306,6 +413,19 @@ async def record_detail(
     modules = await get_all_modules(db)
     modules = filter_visible_modules_for_user(modules, user)
 
+    order_supplies: list[dict] = []
+    order_supplies_total = 0.0
+    order_no = ""
+    supplies_fields: dict[str, str] = {}
+
+    if slug == "orders":
+        supplies_module = await get_module_by_slug(db, "supplies")
+        supplies_ctx = await _get_order_supplies_context(db, record, module, supplies_module)
+        order_no = supplies_ctx["order_no"]
+        order_supplies = supplies_ctx["order_supplies"]
+        order_supplies_total = supplies_ctx["order_supplies_total"]
+        supplies_fields = supplies_ctx["supplies_fields"]
+
     return templates.TemplateResponse("record_edit_modal.html", {
         "request": request,
         "user": user,
@@ -316,6 +436,10 @@ async def record_detail(
         "editable_fields": editable_fields,
         "status_field": status_field,
         "status_options": status_options,
+        "order_no": order_no,
+        "order_supplies": order_supplies,
+        "order_supplies_total": order_supplies_total,
+        "supplies_fields": supplies_fields,
     })
 
 
@@ -368,6 +492,128 @@ async def record_update(
         return HTMLResponse('<div class="alert alert-success">Сохранено</div>', status_code=200)
 
     return HTMLResponse(status_code=200, headers={"HX-Redirect": f"/modules/{slug}"})
+
+
+@router.post("/modules/orders/record/{record_id}/supplies", response_class=HTMLResponse)
+async def add_supply_to_order(
+    request: Request,
+    record_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    orders_module = await get_module_by_slug(db, "orders")
+    supplies_module = await get_module_by_slug(db, "supplies")
+    if not orders_module or not supplies_module:
+        raise HTTPException(404, "Модуль не найден")
+
+    permissions = get_user_permissions(user)
+    supplies_field_names = [f.get("name", "") for f in (supplies_module.fields_schema or []) if isinstance(f, dict)]
+    supplies_editable = get_editable_fields(permissions, "supplies", supplies_field_names, user.is_superuser)
+    if not user.is_superuser and not supplies_editable:
+        raise HTTPException(403, "Нет доступа к редактированию расходников")
+
+    order_result = await db.execute(
+        select(DynamicRecord).where(DynamicRecord.id == record_id, DynamicRecord.module_slug == "orders")
+    )
+    order_record = order_result.scalar_one_or_none()
+    if not order_record:
+        raise HTTPException(404, "Заказ не найден")
+
+    order_field_names = [f.get("name", "") for f in (orders_module.fields_schema or []) if isinstance(f, dict)]
+    order_number_field = _find_field_name_by_candidates(order_field_names, ["№ заказа", "номер", "заказ"])
+    order_no = str((order_record.data or {}).get(order_number_field or "", "")).strip()
+
+    supplies_ctx = await _get_order_supplies_context(db, order_record, orders_module, supplies_module)
+    base_partial_ctx = {
+        "request": request,
+        "record": order_record,
+        "module": orders_module,
+        **supplies_ctx,
+    }
+
+    if not order_no:
+        return templates.TemplateResponse(
+            "partials/order_supplies_section.html",
+            {
+                **base_partial_ctx,
+                "supply_add_error": "Не найден номер заказа для привязки расходника",
+                "supply_add_success": "",
+            },
+            status_code=400,
+        )
+
+    idx_field = _find_field_name_by_candidates(supplies_field_names, ["№ п/п", "номер", "№"])
+    date_field = _find_field_name_by_candidates(supplies_field_names, ["Дата покупки", "дата"])
+    name_field = _find_field_name_by_candidates(supplies_field_names, ["Наименование расходника", "наименование", "расходник"])
+    origin_field = _find_field_name_by_candidates(supplies_field_names, ["Происхождение", "источник", "origin"])
+    cost_field = _find_field_name_by_candidates(supplies_field_names, ["Стоимость", "цена", "себестоимость"])
+    order_ref_field = _find_field_name_by_candidates(supplies_field_names, ["№ заказа", "номер заказа", "заказ"])
+
+    form = await request.form()
+    supply_name = str(form.get("supply_name", "")).strip()
+    supply_cost = str(form.get("supply_cost", "")).strip()
+    supply_date = str(form.get("supply_date", "")).strip() or date.today().isoformat()
+    supply_origin = str(form.get("supply_origin", "")).strip() or f"Заказ {order_no}"
+
+    if not supply_name:
+        return templates.TemplateResponse(
+            "partials/order_supplies_section.html",
+            {
+                **base_partial_ctx,
+                "supply_add_error": "Укажите наименование расходника",
+                "supply_add_success": "",
+            },
+            status_code=400,
+        )
+
+    max_row = (
+        await db.execute(select(func.max(DynamicRecord.row_index)).where(DynamicRecord.module_slug == "supplies"))
+    ).scalar() or 1
+    next_row = max_row + 1
+
+    data: dict[str, str] = {name: "" for name in supplies_field_names}
+    if idx_field:
+        data[idx_field] = str(next_row)
+    if date_field:
+        data[date_field] = supply_date
+    if name_field:
+        data[name_field] = supply_name
+    if origin_field:
+        data[origin_field] = supply_origin
+    if cost_field:
+        data[cost_field] = supply_cost
+    if order_ref_field:
+        data[order_ref_field] = order_no
+
+    supply_record = DynamicRecord(
+        module_slug="supplies",
+        row_index=next_row,
+        data=data,
+        updated_at=datetime.now(timezone.utc),
+    )
+    db.add(supply_record)
+    await db.commit()
+
+    try:
+        from app.sync_service import push_single_record
+        await push_single_record(db, supplies_module, supply_record)
+    except Exception:
+        pass
+
+    refreshed_supplies_ctx = await _get_order_supplies_context(db, order_record, orders_module, supplies_module)
+
+    return templates.TemplateResponse(
+        "partials/order_supplies_section.html",
+        {
+            "request": request,
+            "record": order_record,
+            "module": orders_module,
+            **refreshed_supplies_ctx,
+            "supply_add_error": "",
+            "supply_add_success": f"Расходник добавлен и привязан к заказу {order_no}",
+        },
+        status_code=200,
+    )
 
 
 @router.post("/modules/{slug}/record/{record_id}/field")

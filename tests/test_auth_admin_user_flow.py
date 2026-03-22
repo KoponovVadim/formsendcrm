@@ -219,6 +219,85 @@ async def test_admin_can_update_and_delete_location_and_executor(db_session: Any
     updated_location = (await db_session.execute(select(Location).where(Location.name == "Renamed Point"))).scalar_one_or_none()
     assert updated_location is None
 
+
+@pytest.mark.asyncio
+async def test_order_modal_can_add_supply_and_link_to_order(db_session: Any):
+    app = FastAPI()
+    app.include_router(modules_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    db_session.add_all(
+        [
+            ModuleConfig(
+                slug="orders",
+                sheet_name="Заказы",
+                display_name="Заказы",
+                icon="bi-clipboard-check",
+                enabled=True,
+                fields_schema=[{"name": "№ заказа", "type": "TEXT"}, {"name": "Статус", "type": "TEXT"}],
+                sort_order=0,
+            ),
+            ModuleConfig(
+                slug="supplies",
+                sheet_name="Расходники",
+                display_name="Расходники",
+                icon="bi-box-seam",
+                enabled=True,
+                fields_schema=[
+                    {"name": "№ п/п", "type": "TEXT"},
+                    {"name": "Дата покупки", "type": "DATE"},
+                    {"name": "Наименование расходника", "type": "TEXT"},
+                    {"name": "Происхождение", "type": "TEXT"},
+                    {"name": "Стоимость", "type": "NUMBER"},
+                ],
+                sort_order=1,
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    order_record = DynamicRecord(
+        module_slug="orders",
+        row_index=2,
+        data={"№ заказа": "JX-00000001", "Статус": "В работе"},
+    )
+    db_session.add(order_record)
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post(
+            f"/modules/orders/record/{order_record.id}/supplies",
+            data={
+                "supply_date": "2026-01-10",
+                "supply_name": "Флюс",
+                "supply_cost": "150.5",
+                "supply_origin": "Заказ JX-00000001",
+            },
+            headers={"HX-Request": "true"},
+        )
+
+    assert response.status_code == 200
+    assert "Расходник добавлен" in response.text
+
+    created_supply = (
+        await db_session.execute(
+            select(DynamicRecord)
+            .where(DynamicRecord.module_slug == "supplies")
+            .order_by(DynamicRecord.id.desc())
+        )
+    ).scalars().first()
+    assert created_supply is not None
+    assert created_supply.data.get("Наименование расходника") == "Флюс"
+    assert created_supply.data.get("Происхождение") == "Заказ JX-00000001"
+
     edited_executor = (await db_session.execute(select(Executor).where(Executor.name == "Edited Master"))).scalar_one_or_none()
     assert edited_executor is None
 
