@@ -39,3 +39,8 @@ def _ensure_backward_compatible_columns(sync_conn):
             sync_conn.execute(text("ALTER TABLE order_items ADD COLUMN price_client NUMERIC(12,2) DEFAULT 0 NOT NULL"))
         if "price_partner" not in columns:
             sync_conn.execute(text("ALTER TABLE order_items ADD COLUMN price_partner NUMERIC(12,2) DEFAULT 0 NOT NULL"))
+
+    if "orders" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("orders")}
+        if "comment" not in columns:
+            sync_conn.execute(text("ALTER TABLE orders ADD COLUMN comment TEXT DEFAULT '' NOT NULL"))

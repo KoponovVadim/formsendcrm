@@ -212,3 +212,30 @@ async def test_e2e_like_create_order_via_calculator_flow(db_session: Any):
         order_data = get_response.json()
         assert order_data["location"]["name"] == "E2E Point"
         assert order_data["items"][0]["unit_price"] == 1400
+
+
+@pytest.mark.asyncio
+async def test_calculator_services_partial_has_no_quick_search(db_session: Any):
+    app = FastAPI()
+    app.include_router(calculator_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=13, is_superuser=True, role=SimpleNamespace(permissions={}), specialization="")
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    service = Service(slug="partial-service", name="Partial service", category="repair", is_active=True, base_price=500, calculator_schema={"fields": []})
+    db_session.add(service)
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get("/calculator/services?category=repair")
+
+    assert response.status_code == 200
+    html = response.text
+    assert 'id="calc-service-search"' not in html
+    assert 'id="calc-service-select"' in html

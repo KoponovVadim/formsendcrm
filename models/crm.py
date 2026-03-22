@@ -124,6 +124,7 @@ class Order(Base):
     status: Mapped[str] = mapped_column(String(30), default="new", index=True)
     priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
     source_channel: Mapped[str] = mapped_column(String(60), default="manual", index=True)
+    comment: Mapped[str] = mapped_column(Text, default="")
     total_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
     currency: Mapped[str] = mapped_column(String(3), default="RUB")
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)

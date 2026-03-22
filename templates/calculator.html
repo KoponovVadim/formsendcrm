@@ -20,6 +20,10 @@
                         <label for="calc-client-name" class="form-label mb-1">Имя</label>
                         <input id="calc-client-name" type="text" class="form-control" required>
                     </div>
+                    <div class="col-12">
+                        <label for="calc-order-comment" class="form-label mb-1">Комментарий по заказу</label>
+                        <textarea id="calc-order-comment" class="form-control" rows="2" placeholder="Опишите, что произошло и что нужно сделать"></textarea>
+                    </div>
                 </div>
             </div>
         </div>
@@ -81,6 +85,7 @@
     const statusEl = document.getElementById('calc-status');
     const phoneInput = document.getElementById('calc-client-phone');
     const nameInput = document.getElementById('calc-client-name');
+    const commentInput = document.getElementById('calc-order-comment');
     const phoneSuggestions = document.getElementById('calc-client-phone-suggestions');
     const pageRoot = document.querySelector('.calc-pos-page');
 
@@ -224,19 +229,6 @@
     });
 
     document.body.addEventListener('input', function (event) {
-        const serviceSearch = event.target.closest('#calc-service-search');
-        if (serviceSearch) {
-            const search = String(serviceSearch.value || '').toLowerCase();
-            const select = document.getElementById('calc-service-select');
-            if (!select) return;
-            Array.from(select.options).forEach(function (opt, idx) {
-                if (idx === 0) return;
-                const visible = String(opt.textContent || '').toLowerCase().includes(search);
-                opt.hidden = !visible;
-            });
-            return;
-        }
-
         if (event.target === nameInput || event.target === phoneInput) {
             updateCanSubmit();
         }
@@ -277,6 +269,7 @@
         const price = Number(priceInput.value || 0);
         const name = String(nameInput.value || '').trim();
         const phone = String(phoneInput.value || '').trim();
+        const comment = String(commentInput ? commentInput.value || '' : '').trim();
         const executorSelect = document.getElementById('calc-executor-select');
         const executorId = executorSelect ? Number(executorSelect.value || 0) : 0;
 
@@ -295,6 +288,7 @@
                 credentials: 'same-origin',
                 body: JSON.stringify({
                     client: { name, phone },
+                    comment: comment,
                     service_id: serviceId,
                     location_id: locationId,
                     preferred_executor_id: executorId || undefined,
@@ -331,6 +325,7 @@
 
             phoneInput.value = '';
             nameInput.value = '';
+            if (commentInput) commentInput.value = '';
             categoryInput.value = '';
             serviceIdInput.value = '';
             locationIdInput.value = '';

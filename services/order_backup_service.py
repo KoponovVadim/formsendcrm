@@ -8,7 +8,10 @@ from app.models import DynamicRecord, ModuleConfig
 
 
 def _find_field_name(module: ModuleConfig, candidates: list[str]) -> str | None:
-    schema = cast(list[dict[str, Any]], module.fields_schema or [])
+    raw_schema = module.fields_schema
+    if not isinstance(raw_schema, list):
+        return None
+    schema = cast(list[dict[str, Any]], raw_schema)
     field_names = [str(field.get("name", "")).strip() for field in schema]
     lowered = {name.lower(): name for name in field_names if name}
 

@@ -66,6 +66,7 @@ async def get_order(order_id: int, db: AsyncSession = Depends(get_db), user=Depe
     return {
         "id": order.id,
         "order_no": order.order_no,
+        "comment": order.comment,
         "location_id": order.location_id,
         "location": {
             "id": order.location.id,

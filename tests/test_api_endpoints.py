@@ -405,6 +405,87 @@ async def test_orders_create_endpoint_smoke_from_calculator_payload(async_client
     assert payload.get("status") == "new"
 
 
+async def test_orders_create_does_not_fail_when_backup_sync_raises(async_client, db_session, monkeypatch):
+    from services import order_service as order_service_module
+
+    async def _broken_backup(*args, **kwargs):
+        raise RuntimeError("backup_sync_failed")
+
+    monkeypatch.setattr(order_service_module, "mirror_order_to_dynamic_modules", _broken_backup)
+
+    service = Service(
+        slug="order-sync-fallback",
+        name="Order sync fallback",
+        category="repair",
+        is_active=True,
+        base_price=100,
+        calculator_schema={"fields": []},
+    )
+    location = Location(name="Sync fallback point", is_active=True)
+    db_session.add_all([service, location])
+    await db_session.flush()
+    db_session.add(LocationPrice(location_id=location.id, service_id=service.id, price=111))
+    await db_session.commit()
+
+    response = await async_client.post(
+        "/api/v1/orders",
+        json={
+            "client": {"name": "Backup Fail Client", "phone": "79995551122"},
+            "service_id": service.id,
+            "location_id": location.id,
+            "items": [
+                {
+                    "service_id": service.id,
+                    "quantity": 1,
+                    "unit_price": 111,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload.get("id"), int)
+    assert str(payload.get("order_no", "")).startswith("ORD-")
+
+
+async def test_orders_create_saves_comment_field(async_client, db_session):
+    service = Service(
+        slug="order-comment-service",
+        name="Order comment service",
+        category="repair",
+        is_active=True,
+        base_price=100,
+        calculator_schema={"fields": []},
+    )
+    location = Location(name="Comment point", is_active=True)
+    db_session.add_all([service, location])
+    await db_session.flush()
+    db_session.add(LocationPrice(location_id=location.id, service_id=service.id, price=150))
+    await db_session.commit()
+
+    comment_text = "Клиент принес устройство после попадания воды"
+
+    create_response = await async_client.post(
+        "/api/v1/orders",
+        json={
+            "comment": comment_text,
+            "client": {"name": "Comment Client", "phone": "70000001111"},
+            "service_id": service.id,
+            "location_id": location.id,
+            "items": [{"service_id": service.id, "quantity": 1, "unit_price": 150}],
+        },
+    )
+
+    assert create_response.status_code == 200
+    order_id = create_response.json()["id"]
+
+    get_response = await async_client.get(f"/api/v1/orders/{order_id}")
+    assert get_response.status_code == 200
+    payload = get_response.json()
+    assert payload["comment"] == comment_text
+
+
 async def test_orders_create_mirrors_to_orders_and_clients_modules(async_client, db_session):
     db_session.add_all([
         ModuleConfig(

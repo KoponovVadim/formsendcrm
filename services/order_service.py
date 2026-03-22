@@ -31,6 +31,7 @@ class OrderService:
             status=str(payload.get("status", "new")),
             priority=int(payload.get("priority", 0)),
             source_channel=str(payload.get("source_channel", "manual")),
+            comment=str(payload.get("comment") or payload.get("issue") or "").strip(),
             currency=str(payload.get("currency", "RUB")),
             created_by_user_id=actor_user_id,
         )
@@ -116,21 +117,25 @@ class OrderService:
             after_data={"order_no": order.order_no, "status": order.status, "total_amount": str(order.total_amount)},
         )
 
-        issue_text = str((payload.get("comment") or payload.get("issue") or "")).strip()
-        await mirror_order_to_dynamic_modules(
-            self.db,
-            order_no=str(order.order_no),
-            accepted_at=getattr(order, "created_at", None),
-            client_name=str(client.name or ""),
-            client_phone=str(client.phone or ""),
-            device_name=first_item_title,
-            issue_text=issue_text,
-            master_name=assigned_master_name,
-            status=str(order.status or "new"),
-            warranty_until=str(payload.get("warranty_until") or ""),
-        )
-
         await self.db.commit()
+
+        issue_text = str((payload.get("comment") or payload.get("issue") or "")).strip()
+        try:
+            await mirror_order_to_dynamic_modules(
+                self.db,
+                order_no=str(order.order_no),
+                accepted_at=getattr(order, "created_at", None),
+                client_name=str(client.name or ""),
+                client_phone=str(client.phone or ""),
+                device_name=first_item_title,
+                issue_text=issue_text,
+                master_name=assigned_master_name,
+                status=str(order.status or "new"),
+                warranty_until=str(payload.get("warranty_until") or ""),
+            )
+        except Exception:
+            # Order flow must not fail because backup/sync failed.
+            pass
 
         await event_bus.publish("orders", {"type": "order_created", "order_id": order.id, "order_no": order.order_no})
         return order
