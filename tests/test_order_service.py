@@ -141,3 +141,38 @@ async def test_order_service_assignment_uses_existing_orders_panel_records_only(
 
     task = (await db_session.execute(select(Task).where(Task.order_id == created.id))).scalar_one()
     assert task.executor_id == executor_b.id
+
+
+async def test_order_service_generates_monotonic_jx_order_numbers(db_session):
+    service = Service(
+        slug="jx-sequence-service",
+        name="JX sequence service",
+        category="repair",
+        is_active=True,
+        base_price=300,
+        calculator_schema={},
+    )
+    db_session.add(service)
+    await db_session.commit()
+
+    created_1 = await OrderService(db_session).create_order(
+        {
+            "client": {"name": "Seq Client 1", "phone": "70000000101"},
+            "items": [{"service_id": service.id, "quantity": 1}],
+        },
+        actor_user_id=None,
+    )
+    created_2 = await OrderService(db_session).create_order(
+        {
+            "client": {"name": "Seq Client 2", "phone": "70000000102"},
+            "items": [{"service_id": service.id, "quantity": 1}],
+        },
+        actor_user_id=None,
+    )
+
+    assert str(created_1.order_no).startswith("JX-")
+    assert str(created_2.order_no).startswith("JX-")
+
+    first_num = int(str(created_1.order_no).split("-")[1])
+    second_num = int(str(created_2.order_no).split("-")[1])
+    assert second_num == first_num + 1

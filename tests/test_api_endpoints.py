@@ -401,7 +401,7 @@ async def test_orders_create_endpoint_smoke_from_calculator_payload(async_client
     assert response.status_code == 200
     payload = response.json()
     assert isinstance(payload.get("id"), int)
-    assert str(payload.get("order_no", "")).startswith("ORD-")
+    assert str(payload.get("order_no", "")).startswith("JX-")
     assert payload.get("status") == "Принят"
 
 
@@ -446,7 +446,7 @@ async def test_orders_create_does_not_fail_when_backup_sync_raises(async_client,
     assert response.status_code == 200
     payload = response.json()
     assert isinstance(payload.get("id"), int)
-    assert str(payload.get("order_no", "")).startswith("ORD-")
+    assert str(payload.get("order_no", "")).startswith("JX-")
 
 
 async def test_orders_create_saves_comment_field(async_client, db_session):
