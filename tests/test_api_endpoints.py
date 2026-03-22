@@ -402,7 +402,7 @@ async def test_orders_create_endpoint_smoke_from_calculator_payload(async_client
     payload = response.json()
     assert isinstance(payload.get("id"), int)
     assert str(payload.get("order_no", "")).startswith("ORD-")
-    assert payload.get("status") == "Новый"
+    assert payload.get("status") == "Принят"
 
 
 async def test_orders_create_does_not_fail_when_backup_sync_raises(async_client, db_session, monkeypatch):
@@ -823,7 +823,7 @@ async def test_orders_create_then_get_uses_fixed_price_flow(async_client, db_ses
 
     assert create_response.status_code == 200
     created = create_response.json()
-    assert created["status"] == "Новый"
+    assert created["status"] == "Принят"
 
     get_response = await async_client.get(f"/api/v1/orders/{created['id']}")
     assert get_response.status_code == 200

@@ -15,6 +15,7 @@ from app.routes_auth import router as auth_router
 from app.routes_modules import router as modules_router
 from app.routes_admin import router as admin_router
 from app.routes_calculator import router as calculator_router
+from app.routes_logistics import router as logistics_router
 from app.database import get_db
 from api.orders import router as orders_api_router
 from api.catalog import router as catalog_api_router
@@ -60,6 +61,21 @@ async def lifespan(app: FastAPI):
             db.add(role)
             await db.commit()
 
+        courier_role = (await db.execute(select(Role).where(Role.name == "Курьер"))).scalar_one_or_none()
+        if not courier_role:
+            db.add(
+                Role(
+                    name="Курьер",
+                    description="Доступ в кабинет курьера и к перевозкам",
+                    permissions={
+                        "courier": {"cabinet": True},
+                        "logistics": {"manage": False},
+                        "v2_services_manage": False,
+                    },
+                )
+            )
+            await db.commit()
+
     logger.info("Application started")
     yield
     # Shutdown
@@ -79,6 +95,7 @@ app.include_router(auth_router)
 app.include_router(modules_router)
 app.include_router(admin_router)
 app.include_router(calculator_router)
+app.include_router(logistics_router)
 app.include_router(orders_api_router)
 app.include_router(catalog_api_router)
 app.include_router(chats_api_router)

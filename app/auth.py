@@ -236,3 +236,27 @@ def get_services_access_scope(user: User) -> dict:
         "allowed_points": dedup,
         "hide_own_price": hide_own_price,
     }
+
+
+def can_access_courier_cabinet(user: User) -> bool:
+    if user.is_superuser:
+        return True
+
+    permissions = get_user_permissions(user)
+    courier = permissions.get("courier") if isinstance(permissions, dict) else None
+    if isinstance(courier, dict) and "cabinet" in courier:
+        return bool(courier.get("cabinet"))
+    return False
+
+
+def can_manage_logistics(user: User) -> bool:
+    if user.is_superuser:
+        return True
+
+    permissions = get_user_permissions(user)
+    logistics = permissions.get("logistics") if isinstance(permissions, dict) else None
+    if isinstance(logistics, dict) and "manage" in logistics:
+        return bool(logistics.get("manage"))
+
+    # Fallback: users with V2 services management can operate logistics.
+    return can_manage_services(user)

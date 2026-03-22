@@ -65,6 +65,13 @@ class CRMRepository:
 
         location_ids = [int(location.id) for location, _, _ in rows]
         active_order_statuses = [
+            "принят",
+            "ожидает курьера",
+            "в пути в цо",
+            "в ремонте",
+            "готов к отправке",
+            "в пути в точку выдачи",
+            "готов к выдаче",
             "new",
             "open",
             "assigned",
@@ -272,6 +279,13 @@ class CRMRepository:
             available_names = None
 
         active_statuses = {
+            "принят",
+            "ожидает курьера",
+            "в пути в цо",
+            "в ремонте",
+            "готов к отправке",
+            "в пути в точку выдачи",
+            "готов к выдаче",
             "новый",
             "new",
             "open",

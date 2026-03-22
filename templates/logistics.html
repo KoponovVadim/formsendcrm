@@ -1,0 +1,139 @@
+{% extends "layout.html" %}
+{% block title %}Логистика заказов{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+    <h4 class="fw-bold mb-0"><i class="bi bi-truck me-2"></i>Логистика заказов</h4>
+    <a href="/courier" class="btn btn-outline-primary btn-sm"><i class="bi bi-person-badge me-1"></i>Открыть ЛК курьера</a>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white fw-semibold">Основная точка (ЦО)</div>
+    <div class="card-body">
+        <form method="post" action="/admin/logistics/main-point" class="row g-2 align-items-end">
+            <div class="col-12 col-md-6 col-lg-4">
+                <label class="form-label mb-1">Точка ремонта/выдачи по умолчанию</label>
+                <select name="location_id" class="form-select">
+                    <option value="">Не выбрано</option>
+                    {% for location in locations %}
+                    <option value="{{ location.id }}" {% if main_location_id == location.id %}selected{% endif %}>{{ location.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-md-3 col-lg-2 d-grid">
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white fw-semibold">Создать перевозку</div>
+    <div class="card-body">
+        <form method="post" action="/admin/logistics/deliveries/create" class="row g-2 align-items-end">
+            <div class="col-12 col-lg-3">
+                <label class="form-label mb-1">Заказ</label>
+                <select name="order_id" class="form-select" required>
+                    <option value="">Выберите заказ</option>
+                    {% for order in orders %}
+                    <option value="{{ order.id }}">{{ order.order_no }} ({{ order.status }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-lg-2">
+                <label class="form-label mb-1">Откуда</label>
+                <select name="pickup_location_id" class="form-select" required>
+                    {% for location in locations %}
+                    <option value="{{ location.id }}">{{ location.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-lg-2">
+                <label class="form-label mb-1">Куда</label>
+                <select name="dropoff_location_id" class="form-select" required>
+                    {% for location in locations %}
+                    <option value="{{ location.id }}">{{ location.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-lg-2">
+                <label class="form-label mb-1">Тип плеча</label>
+                <select name="leg_type" class="form-select">
+                    <option value="to_main">В ЦО</option>
+                    <option value="to_point">В точку выдачи</option>
+                </select>
+            </div>
+            <div class="col-12 col-lg-1">
+                <label class="form-label mb-1">Оплата</label>
+                <input type="number" step="0.01" name="courier_fee" value="0" class="form-control">
+            </div>
+            <div class="col-12 col-lg-1">
+                <label class="form-label mb-1">Расход</label>
+                <input type="number" step="0.01" name="transport_cost" value="0" class="form-control">
+            </div>
+            <div class="col-12 col-lg-1">
+                <div class="form-check mt-4">
+                    <input class="form-check-input" type="checkbox" name="payment_eligible" id="payment_eligible">
+                    <label class="form-check-label" for="payment_eligible">Оплата</label>
+                </div>
+            </div>
+            <div class="col-12 col-lg-9">
+                <input type="text" name="notes" class="form-control" placeholder="Комментарий по перевозке">
+            </div>
+            <div class="col-12 col-lg-3 d-grid">
+                <button type="submit" class="btn btn-success">Создать перевозку</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-white fw-semibold">Перевозки</div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Заказ</th>
+                        <th>Маршрут</th>
+                        <th>Плечо</th>
+                        <th>Статус</th>
+                        <th>Курьер</th>
+                        <th>Оплата</th>
+                        <th>Выплачено</th>
+                        <th class="text-end">Финансы</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for delivery in deliveries %}
+                    <tr>
+                        <td>#{{ delivery.id }}</td>
+                        <td>{{ delivery.order.order_no if delivery.order else delivery.order_id }}</td>
+                        <td>
+                            {{ delivery.pickup_location.name if delivery.pickup_location else '-' }}
+                            →
+                            {{ delivery.dropoff_location.name if delivery.dropoff_location else '-' }}
+                        </td>
+                        <td>{% if delivery.leg_type == 'to_main' %}В ЦО{% else %}В точку{% endif %}</td>
+                        <td>{{ delivery.status }}</td>
+                        <td>{{ delivery.courier_user_id or '-' }}</td>
+                        <td>{% if delivery.payment_eligible %}<span class="badge bg-success">Да</span>{% else %}<span class="badge bg-secondary">Нет</span>{% endif %}</td>
+                        <td>{% if delivery.courier_paid %}<span class="badge bg-success">Да</span>{% else %}<span class="badge bg-warning text-dark">Нет</span>{% endif %}</td>
+                        <td class="text-end">
+                            <form method="post" action="/admin/logistics/deliveries/{{ delivery.id }}/payment" class="d-inline-flex gap-1 align-items-center">
+                                <input type="number" step="0.01" name="courier_fee" value="{{ delivery.courier_fee or 0 }}" class="form-control form-control-sm" style="max-width: 96px;">
+                                <label class="small"><input type="checkbox" name="payment_eligible" {% if delivery.payment_eligible %}checked{% endif %}> Оплата</label>
+                                <label class="small"><input type="checkbox" name="courier_paid" {% if delivery.courier_paid %}checked{% endif %}> Выпл.</label>
+                                <button type="submit" class="btn btn-sm btn-outline-primary">OK</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="9" class="text-muted">Перевозок пока нет.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

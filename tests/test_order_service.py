@@ -125,7 +125,7 @@ async def test_order_service_assignment_uses_existing_orders_panel_records_only(
     db_session.add_all(
         [
             DynamicRecord(module_slug="orders", row_index=2, data={"№ заказа": "ORD-1", "Мастер": "Master A", "Статус": "В работе"}),
-            DynamicRecord(module_slug="orders", row_index=3, data={"№ заказа": "ORD-2", "Мастер": "Master A", "Статус": "Новый"}),
+            DynamicRecord(module_slug="orders", row_index=3, data={"№ заказа": "ORD-2", "Мастер": "Master A", "Статус": "Принят"}),
         ]
     )
     await db_session.commit()

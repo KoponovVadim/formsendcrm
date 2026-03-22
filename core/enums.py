@@ -17,11 +17,15 @@ class ClientStage(str, Enum):
 
 
 class OrderStatus(str, Enum):
-    NEW = "new"
-    IN_PROGRESS = "in_progress"
-    WAITING = "waiting"
-    DONE = "done"
-    CANCELED = "canceled"
+    ACCEPTED = "Принят"
+    AWAITING_COURIER = "Ожидает курьера"
+    IN_TRANSIT_TO_MAIN = "В пути в ЦО"
+    IN_REPAIR = "В ремонте"
+    READY_FOR_DISPATCH = "Готов к отправке"
+    IN_TRANSIT_TO_POINT = "В пути в точку выдачи"
+    READY_FOR_PICKUP = "Готов к выдаче"
+    ISSUED = "Выдан"
+    CANCELED = "Отменен"
 
 
 class TaskStatus(str, Enum):

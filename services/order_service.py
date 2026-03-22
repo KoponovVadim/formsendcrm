@@ -9,9 +9,10 @@ from repositories.crm_repository import CRMRepository
 from services.order_backup_service import mirror_order_to_dynamic_modules
 from services.assignment_service import choose_best_executor
 from services.audit_service import write_audit
+from services.logistics_service import ensure_delivery_to_main_for_order
 
 
-DEFAULT_ORDER_STATUS = "Новый"
+DEFAULT_ORDER_STATUS = "Принят"
 
 
 class OrderService:
@@ -121,6 +122,9 @@ class OrderService:
         )
 
         await self.db.commit()
+
+        # For orders accepted outside of the main point, create courier leg to the main point.
+        await ensure_delivery_to_main_for_order(self.db, order)
 
         issue_text = str((payload.get("comment") or payload.get("issue") or "")).strip()
         try:

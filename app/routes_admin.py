@@ -27,19 +27,25 @@ router = APIRouter(prefix="/admin")
 templates = Jinja2Templates(directory="templates")
 
 DEFAULT_STATUS_OPTIONS = [
-    "Новый",
-    "В работе",
-    "Ожидание",
-    "Готов",
+    "Принят",
+    "Ожидает курьера",
+    "В пути в ЦО",
+    "В ремонте",
+    "Готов к отправке",
+    "В пути в точку выдачи",
+    "Готов к выдаче",
     "Выдан",
     "Отменен",
 ]
 
 DEFAULT_STATUS_COLORS = {
-    "Новый": "#c084fc",
-    "В работе": "#facc15",
-    "Ожидание": "#9ca3af",
-    "Готов": "#4ade80",
+    "Принят": "#93c5fd",
+    "Ожидает курьера": "#fbbf24",
+    "В пути в ЦО": "#60a5fa",
+    "В ремонте": "#f59e0b",
+    "Готов к отправке": "#22c55e",
+    "В пути в точку выдачи": "#38bdf8",
+    "Готов к выдаче": "#34d399",
     "Выдан": "#60a5fa",
     "Отменен": "#fecaca",
 }
@@ -666,6 +672,14 @@ async def role_update(
             "fields_visible": fields_visible,
             "fields_editable": fields_editable,
         }
+
+    permissions["courier"] = {
+        "cabinet": form.get("perm_courier_cabinet") == "on",
+    }
+    permissions["logistics"] = {
+        "manage": form.get("perm_logistics_manage") == "on",
+    }
+
     role.permissions = permissions
     await db.commit()
     return RedirectResponse("/admin/roles", status_code=302)

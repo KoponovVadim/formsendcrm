@@ -121,7 +121,7 @@ class Order(Base):
     order_no: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
     location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), nullable=True, index=True)
-    status: Mapped[str] = mapped_column(String(30), default="Новый", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="Принят", index=True)
     priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
     source_channel: Mapped[str] = mapped_column(String(60), default="manual", index=True)
     comment: Mapped[str] = mapped_column(Text, default="")
@@ -135,6 +135,7 @@ class Order(Base):
     location: Mapped[Location | None] = relationship(back_populates="orders")
     items: Mapped[list["OrderItem"]] = relationship(back_populates="order", cascade="all, delete-orphan")
     tasks: Mapped[list["Task"]] = relationship(back_populates="order", cascade="all, delete-orphan")
+    logistics_deliveries: Mapped[list["LogisticsDelivery"]] = relationship(back_populates="order", cascade="all, delete-orphan")
 
 
 class OrderItem(Base):
@@ -183,7 +184,43 @@ class Task(Base):
     executor: Mapped[Executor | None] = relationship(back_populates="tasks")
 
 
+class LogisticsDelivery(Base):
+    __tablename__ = "logistics_deliveries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
+    pickup_location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), nullable=True, index=True)
+    dropoff_location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), nullable=True, index=True)
+    leg_type: Mapped[str] = mapped_column(String(30), default="to_main", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="created", index=True)
+    courier_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    courier_fee: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    transport_cost: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    payment_eligible: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    courier_paid: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    picked_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), index=True)
+
+    order: Mapped[Order] = relationship(back_populates="logistics_deliveries")
+    pickup_location: Mapped[Location | None] = relationship(foreign_keys=[pickup_location_id])
+    dropoff_location: Mapped[Location | None] = relationship(foreign_keys=[dropoff_location_id])
+
+
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), index=True)
+
+
 Index("ix_tasks_executor_status", Task.executor_id, Task.status)
 Index("ix_orders_client_status", Order.client_id, Order.status)
 Index("ix_order_items_order_status", OrderItem.order_id, OrderItem.status)
 Index("ix_executors_active_load", Executor.is_active, Executor.current_active_tasks)
+Index("ix_logistics_order_status", LogisticsDelivery.order_id, LogisticsDelivery.status)

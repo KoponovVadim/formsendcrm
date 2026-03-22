@@ -27,6 +27,30 @@
         </div>
     </div>
 
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white fw-bold">Логистика и курьер</div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-12 col-md-6">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" name="perm_logistics_manage" id="perm_logistics_manage"
+                               {% if role.permissions and role.permissions.get('logistics', {}).get('manage', false) %}checked{% endif %}>
+                        <label class="form-check-label" for="perm_logistics_manage">Управление логистикой</label>
+                    </div>
+                    <small class="text-muted">Доступ к разделу логистики в админке и управлению оплатой курьера.</small>
+                </div>
+                <div class="col-12 col-md-6">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" name="perm_courier_cabinet" id="perm_courier_cabinet"
+                               {% if role.permissions and role.permissions.get('courier', {}).get('cabinet', false) %}checked{% endif %}>
+                        <label class="form-check-label" for="perm_courier_cabinet">Личный кабинет курьера</label>
+                    </div>
+                    <small class="text-muted">Видит только перевозки, которые нужно забрать и доставить.</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Permissions per module -->
     {% for mod in all_modules %}
     {% set mod_perms = role.permissions.get(mod.slug, {}) if role.permissions else {} %}
