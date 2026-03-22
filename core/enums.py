@@ -17,13 +17,14 @@ class ClientStage(str, Enum):
 
 
 class OrderStatus(str, Enum):
-    ACCEPTED = "Принят"
-    AWAITING_COURIER = "Ожидает курьера"
-    IN_TRANSIT_TO_MAIN = "В пути в ЦО"
+    NEW = "Новый"
+    AWAITING_DELIVERY_TO_REPAIR = "Ожидает доставки в ремонт"
+    IN_TRANSIT_TO_REPAIR = "Едет в точку ремонта"
+    ARRIVED_REPAIR_POINT = "Приехал в точку ремонта"
     IN_REPAIR = "В ремонте"
-    READY_FOR_DISPATCH = "Готов к отправке"
-    IN_TRANSIT_TO_POINT = "В пути в точку выдачи"
-    READY_FOR_PICKUP = "Готов к выдаче"
+    READY = "Готов"
+    IN_TRANSIT_TO_PICKUP = "Едет на выдачу"
+    AWAITING_PICKUP = "Ожидает выдачи"
     ISSUED = "Выдан"
     CANCELED = "Отменен"
 

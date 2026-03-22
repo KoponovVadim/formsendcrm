@@ -27,6 +27,24 @@
 </div>
 
 <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white fw-semibold">Фиксированная оплата курьера</div>
+    <div class="card-body">
+        <form method="post" action="/admin/logistics/courier-fee" class="row g-2 align-items-end">
+            <div class="col-12 col-md-4 col-lg-3">
+                <label class="form-label mb-1">Единая ставка за заказ (RUB)</label>
+                <input type="number" step="0.01" min="0" name="courier_fixed_fee" value="{{ courier_fixed_fee or 0 }}" class="form-control">
+            </div>
+            <div class="col-12 col-md-3 col-lg-2 d-grid">
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+            </div>
+            <div class="col-12 col-md-5 col-lg-7 text-muted small">
+                К выплате сейчас: <strong>{{ total_payable }} RUB</strong>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
     <div class="card-header bg-white fw-semibold">Создать перевозку</div>
     <div class="card-body">
         <form method="post" action="/admin/logistics/deliveries/create" class="row g-2 align-items-end">
@@ -63,10 +81,6 @@
                 </select>
             </div>
             <div class="col-12 col-lg-1">
-                <label class="form-label mb-1">Оплата</label>
-                <input type="number" step="0.01" name="courier_fee" value="0" class="form-control">
-            </div>
-            <div class="col-12 col-lg-1">
                 <label class="form-label mb-1">Расход</label>
                 <input type="number" step="0.01" name="transport_cost" value="0" class="form-control">
             </div>
@@ -97,7 +111,7 @@
                         <th>Заказ</th>
                         <th>Маршрут</th>
                         <th>Маршрут</th>
-                        <th>Статус</th>
+                        <th>Статус маршрута</th>
                         <th>Курьер</th>
                         <th>Оплата</th>
                         <th>Выплачено</th>
@@ -115,13 +129,14 @@
                             {{ delivery.dropoff_location.name if delivery.dropoff_location else '-' }}
                         </td>
                         <td>{% if delivery.leg_type == 'to_main' %}В ЦО{% else %}В точку{% endif %}</td>
-                        <td>{{ delivery.status }}</td>
+                        <td>{% if delivery.status == 'awaiting_dispatch' %}Ожидает отправки{% elif delivery.status == 'accepted' %}Принят курьером{% elif delivery.status in ['picked_up', 'in_transit'] %}Едет{% elif delivery.status == 'delivered' %}Доставлен{% else %}{{ delivery.status }}{% endif %}</td>
                         <td>{{ delivery.courier_user_id or '-' }}</td>
                         <td>{% if delivery.payment_eligible %}<span class="badge bg-success">Да</span>{% else %}<span class="badge bg-secondary">Нет</span>{% endif %}</td>
                         <td>{% if delivery.courier_paid %}<span class="badge bg-success">Да</span>{% else %}<span class="badge bg-warning text-dark">Нет</span>{% endif %}</td>
                         <td class="text-end">
                             <form method="post" action="/admin/logistics/deliveries/{{ delivery.id }}/payment" class="d-inline-flex gap-1 align-items-center">
-                                <input type="number" step="0.01" name="courier_fee" value="{{ delivery.courier_fee or 0 }}" class="form-control form-control-sm" style="max-width: 96px;">
+                                <span class="small text-muted">{{ delivery.courier_fee or 0 }} RUB</span>
+                                <input type="hidden" name="courier_fee" value="{{ delivery.courier_fee or 0 }}">
                                 <label class="small"><input type="checkbox" name="payment_eligible" {% if delivery.payment_eligible %}checked{% endif %}> Оплата</label>
                                 <label class="small"><input type="checkbox" name="courier_paid" {% if delivery.courier_paid %}checked{% endif %}> Выпл.</label>
                                 <button type="submit" class="btn btn-sm btn-outline-primary">OK</button>

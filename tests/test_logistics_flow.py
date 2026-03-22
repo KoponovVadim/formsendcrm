@@ -51,7 +51,7 @@ async def test_order_creation_auto_creates_delivery_to_main_point(db_session: An
     payload = response.json()
 
     order = (await db_session.execute(select(Order).where(Order.id == int(payload["id"])))).scalar_one()
-    assert order.status == "Ожидает курьера"
+    assert order.status == "Ожидает доставки в ремонт"
 
     deliveries = (
         await db_session.execute(select(LogisticsDelivery).where(LogisticsDelivery.order_id == int(order.id)))
@@ -88,7 +88,7 @@ async def test_courier_cabinet_updates_delivery_and_order_status(db_session: Any
     db_session.add_all([pickup, main_point, client])
     await db_session.flush()
 
-    order = Order(order_no="ORD-COURIER-1", client_id=client.id, location_id=pickup.id, status="Ожидает курьера", total_amount=1000)
+    order = Order(order_no="JX-00000011", client_id=client.id, location_id=pickup.id, status="Ожидает доставки в ремонт", total_amount=1000)
     db_session.add(order)
     await db_session.flush()
 
@@ -97,7 +97,7 @@ async def test_courier_cabinet_updates_delivery_and_order_status(db_session: Any
         pickup_location_id=pickup.id,
         dropoff_location_id=main_point.id,
         leg_type="to_main",
-        status="awaiting_pickup",
+        status="awaiting_dispatch",
         payment_eligible=False,
         courier_paid=False,
     )
@@ -120,4 +120,68 @@ async def test_courier_cabinet_updates_delivery_and_order_status(db_session: Any
 
     assert refreshed_delivery.status == "delivered"
     assert int(refreshed_order.location_id or 0) == int(main_point.id)
-    assert refreshed_order.status == "В ремонте"
+    assert refreshed_order.status == "Приехал в точку ремонта"
+
+
+@pytest.mark.asyncio
+async def test_courier_cabinet_shows_only_awaiting_dispatch(db_session: Any):
+    app = FastAPI()
+    app.include_router(logistics_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(
+            id=88,
+            is_superuser=False,
+            email="courier2@test.local",
+            specialization="",
+            role=SimpleNamespace(permissions={"courier": {"cabinet": True}}),
+        )
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    pickup = Location(name="Pickup-2", is_active=True)
+    dropoff = Location(name="Dropoff-2", is_active=True)
+    client = Client(name="Courier Client 2", phone="70000000003", email="")
+    db_session.add_all([pickup, dropoff, client])
+    await db_session.flush()
+
+    order_wait = Order(order_no="JX-00000021", client_id=client.id, location_id=pickup.id, status="Ожидает доставки в ремонт", total_amount=1000)
+    order_transit = Order(order_no="JX-00000022", client_id=client.id, location_id=pickup.id, status="Едет в точку ремонта", total_amount=1000)
+    db_session.add_all([order_wait, order_transit])
+    await db_session.flush()
+
+    db_session.add_all(
+        [
+            LogisticsDelivery(
+                order_id=order_wait.id,
+                pickup_location_id=pickup.id,
+                dropoff_location_id=dropoff.id,
+                leg_type="to_main",
+                status="awaiting_dispatch",
+                payment_eligible=True,
+                courier_fee=350,
+            ),
+            LogisticsDelivery(
+                order_id=order_transit.id,
+                pickup_location_id=pickup.id,
+                dropoff_location_id=dropoff.id,
+                leg_type="to_main",
+                status="in_transit",
+                payment_eligible=True,
+                courier_fee=350,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client_http:
+        response = await client_http.get("/courier")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "JX-00000021" in html
+    assert "JX-00000022" not in html

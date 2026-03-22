@@ -5,9 +5,14 @@
     <h4 class="fw-bold mb-0"><i class="bi bi-person-badge me-2"></i>Личный кабинет курьера</h4>
     <a href="/admin/logistics" class="btn btn-outline-secondary btn-sm"><i class="bi bi-arrow-left me-1"></i>К логистике</a>
 </div>
+<div class="alert alert-info py-2">
+    Вы видите только заказы, которые ожидают отправки. Действия выполняет менеджер, курьеру доступны маршрут, номер заказа и сумма.
+</div>
+
+<div class="mb-2 small text-muted">Сумма по видимым заказам: <strong>{{ total_visible_fee }} RUB</strong></div>
 
 <div class="card border-0 shadow-sm">
-    <div class="card-header bg-white fw-semibold">Доступные перевозки</div>
+    <div class="card-header bg-white fw-semibold">Заказы в ожидании отправки</div>
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table mb-0">
@@ -16,10 +21,9 @@
                         <th>ID</th>
                         <th>Заказ</th>
                         <th>Маршрут</th>
-                        <th>Маршрут</th>
+                        <th>Тип маршрута</th>
                         <th>Статус</th>
                         <th>Оплата</th>
-                        <th class="text-end">Действия</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -33,28 +37,11 @@
                             {{ delivery.dropoff_location.name if delivery.dropoff_location else '-' }}
                         </td>
                         <td>{% if delivery.leg_type == 'to_main' %}В ЦО{% else %}В точку{% endif %}</td>
-                        <td>{{ delivery.status }}</td>
+                        <td>Ожидает отправки</td>
                         <td>{% if delivery.payment_eligible %}{{ delivery.courier_fee or 0 }} RUB{% else %}0 RUB{% endif %}</td>
-                        <td class="text-end">
-                            {% if delivery.status == 'awaiting_pickup' %}
-                            <form method="post" action="/courier/deliveries/{{ delivery.id }}/accept" class="d-inline">
-                                <button type="submit" class="btn btn-sm btn-outline-primary">Взять</button>
-                            </form>
-                            {% endif %}
-                            {% if delivery.status in ['awaiting_pickup', 'accepted'] %}
-                            <form method="post" action="/courier/deliveries/{{ delivery.id }}/pickup" class="d-inline">
-                                <button type="submit" class="btn btn-sm btn-outline-warning">Забрал</button>
-                            </form>
-                            {% endif %}
-                            {% if delivery.status in ['accepted', 'picked_up'] %}
-                            <form method="post" action="/courier/deliveries/{{ delivery.id }}/deliver" class="d-inline">
-                                <button type="submit" class="btn btn-sm btn-outline-success">Доставил</button>
-                            </form>
-                            {% endif %}
-                        </td>
                     </tr>
                 {% else %}
-                    <tr><td colspan="7" class="text-muted">Перевозок для курьера пока нет.</td></tr>
+                    <tr><td colspan="6" class="text-muted">Нет заказов, ожидающих отправки.</td></tr>
                 {% endfor %}
                 </tbody>
             </table>

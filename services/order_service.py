@@ -11,7 +11,7 @@ from services.audit_service import write_audit
 from services.logistics_service import ensure_delivery_to_main_for_order
 
 
-DEFAULT_ORDER_STATUS = "Принят"
+DEFAULT_ORDER_STATUS = "Новый"
 
 
 class OrderService:

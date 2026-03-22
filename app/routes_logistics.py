@@ -14,8 +14,10 @@ from services.logistics_service import (
     LOGISTICS_ORDER_STATUSES,
     courier_visible_deliveries,
     create_delivery,
+    get_courier_fixed_fee,
     get_main_location_id,
     list_logistics_deliveries,
+    set_courier_fixed_fee,
     set_main_location_id,
     update_delivery_status,
 )
@@ -85,6 +87,9 @@ async def admin_logistics_page(
     locations = (await db.execute(select(Location).order_by(Location.name.asc()))).scalars().all()
     orders = (await db.execute(select(Order).order_by(Order.created_at.desc()).limit(200))).scalars().all()
     main_location_id = await get_main_location_id(db)
+    courier_fixed_fee = await get_courier_fixed_fee(db)
+
+    total_payable = sum(float(delivery.courier_fee or 0) for delivery in deliveries if bool(delivery.payment_eligible) and not bool(delivery.courier_paid))
 
     return templates.TemplateResponse(
         "logistics.html",
@@ -96,9 +101,29 @@ async def admin_logistics_page(
             "locations": locations,
             "orders": orders,
             "main_location_id": main_location_id,
+            "courier_fixed_fee": courier_fixed_fee,
+            "total_payable": total_payable,
             "status_map": LOGISTICS_ORDER_STATUSES,
         },
     )
+
+
+@router.post("/admin/logistics/courier-fee")
+async def admin_logistics_set_courier_fee(
+    courier_fixed_fee: str = Form("0"),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _deny_if_not_logistics_manager(user)
+
+    raw = str(courier_fixed_fee or "0").strip().replace(",", ".")
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+
+    await set_courier_fixed_fee(db, value)
+    return RedirectResponse("/admin/logistics", status_code=302)
 
 
 @router.post("/admin/logistics/main-point")
@@ -142,7 +167,7 @@ async def admin_logistics_create_delivery(
             pickup_location_id=int(pickup_location_id),
             dropoff_location_id=int(dropoff_location_id),
             leg_type=str(route_type or leg_type or "to_main"),
-            courier_fee=float(courier_fee or 0),
+            courier_fee=0,
             transport_cost=float(transport_cost or 0),
             payment_eligible=str(payment_eligible or "").lower() in {"on", "1", "true", "yes"},
             notes=str(notes or ""),
@@ -188,6 +213,7 @@ async def courier_cabinet(
     modules = filter_visible_modules_for_user(modules, user)
 
     deliveries = await courier_visible_deliveries(db, courier_user_id=int(user.id))
+    total_visible_fee = sum(float(delivery.courier_fee or 0) for delivery in deliveries if bool(delivery.payment_eligible))
 
     return templates.TemplateResponse(
         "courier_cabinet.html",
@@ -196,6 +222,7 @@ async def courier_cabinet(
             "user": user,
             "modules": modules,
             "deliveries": deliveries,
+            "total_visible_fee": total_visible_fee,
             "status_map": LOGISTICS_ORDER_STATUSES,
         },
     )

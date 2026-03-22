@@ -10,15 +10,17 @@ from sqlalchemy.orm import selectinload
 from models.crm import LogisticsDelivery, Location, Order, SystemSetting
 
 MAIN_LOCATION_SETTING_KEY = "logistics_main_location_id"
+COURIER_FIXED_FEE_SETTING_KEY = "logistics_courier_fixed_fee"
 
 LOGISTICS_ORDER_STATUSES = {
-    "accepted": "Принят",
-    "awaiting_pickup": "Ожидает курьера",
-    "in_transit_to_main": "В пути в ЦО",
+    "new": "Новый",
+    "awaiting_delivery_to_repair": "Ожидает доставки в ремонт",
+    "in_transit_to_repair": "Едет в точку ремонта",
+    "arrived_repair_point": "Приехал в точку ремонта",
     "in_repair": "В ремонте",
-    "ready_for_dispatch": "Готов к отправке",
-    "in_transit_to_point": "В пути в точку выдачи",
-    "ready_for_pickup": "Готов к выдаче",
+    "ready": "Готов",
+    "in_transit_to_pickup": "Едет на выдачу",
+    "awaiting_pickup": "Ожидает выдачи",
     "issued": "Выдан",
     "canceled": "Отменен",
 }
@@ -42,6 +44,27 @@ async def set_main_location_id(db: AsyncSession, location_id: int | None) -> Non
     await db.commit()
 
 
+async def get_courier_fixed_fee(db: AsyncSession) -> Decimal:
+    row = (await db.execute(select(SystemSetting).where(SystemSetting.key == COURIER_FIXED_FEE_SETTING_KEY))).scalar_one_or_none()
+    if not row:
+        return Decimal("0")
+    raw = str(row.value or "").strip().replace(",", ".")
+    try:
+        return Decimal(raw)
+    except Exception:
+        return Decimal("0")
+
+
+async def set_courier_fixed_fee(db: AsyncSession, fee: Decimal | float | int) -> None:
+    row = (await db.execute(select(SystemSetting).where(SystemSetting.key == COURIER_FIXED_FEE_SETTING_KEY))).scalar_one_or_none()
+    value = str(Decimal(str(fee or 0)))
+    if row:
+        row.value = value
+    else:
+        db.add(SystemSetting(key=COURIER_FIXED_FEE_SETTING_KEY, value=value))
+    await db.commit()
+
+
 async def ensure_delivery_to_main_for_order(db: AsyncSession, order: Order) -> LogisticsDelivery | None:
     main_location_id = await get_main_location_id(db)
     if not main_location_id or not order.location_id:
@@ -60,19 +83,21 @@ async def ensure_delivery_to_main_for_order(db: AsyncSession, order: Order) -> L
     if existing:
         return existing
 
+    fixed_fee = await get_courier_fixed_fee(db)
+
     delivery = LogisticsDelivery(
         order_id=int(order.id),
         pickup_location_id=int(order.location_id),
         dropoff_location_id=int(main_location_id),
         leg_type="to_main",
-        status="awaiting_pickup",
-        courier_fee=Decimal("0"),
+        status="awaiting_dispatch",
+        courier_fee=fixed_fee,
         transport_cost=Decimal("0"),
         payment_eligible=False,
         notes="Автоматически создано при приемке заказа на точке.",
     )
     db.add(delivery)
-    order.status = LOGISTICS_ORDER_STATUSES["awaiting_pickup"]
+    order.status = LOGISTICS_ORDER_STATUSES["awaiting_delivery_to_repair"]
     await db.commit()
     return delivery
 
@@ -101,12 +126,8 @@ async def courier_visible_deliveries(db: AsyncSession, courier_user_id: int | No
             selectinload(LogisticsDelivery.pickup_location),
             selectinload(LogisticsDelivery.dropoff_location),
         )
-        .where(LogisticsDelivery.status.in_(["awaiting_pickup", "accepted", "picked_up"]))
+        .where(LogisticsDelivery.status == "awaiting_dispatch")
     )
-    if courier_user_id is not None and int(courier_user_id) > 0:
-        stmt = stmt.where(
-            (LogisticsDelivery.courier_user_id.is_(None)) | (LogisticsDelivery.courier_user_id == int(courier_user_id))
-        )
     return list((await db.execute(stmt.order_by(LogisticsDelivery.created_at.asc(), LogisticsDelivery.id.asc()))).scalars().all())
 
 
@@ -125,7 +146,7 @@ async def update_delivery_status(
 
     if next_status == "accepted":
         delivery.accepted_at = now
-    elif next_status == "picked_up":
+    elif next_status in {"picked_up", "in_transit"}:
         delivery.picked_up_at = now
     elif next_status == "delivered":
         delivery.delivered_at = now
@@ -134,20 +155,20 @@ async def update_delivery_status(
     if order:
         if delivery.leg_type == "to_main":
             if next_status == "accepted":
-                order.status = LOGISTICS_ORDER_STATUSES["awaiting_pickup"]
-            elif next_status == "picked_up":
-                order.status = LOGISTICS_ORDER_STATUSES["in_transit_to_main"]
+                order.status = LOGISTICS_ORDER_STATUSES["awaiting_delivery_to_repair"]
+            elif next_status in {"picked_up", "in_transit"}:
+                order.status = LOGISTICS_ORDER_STATUSES["in_transit_to_repair"]
             elif next_status == "delivered":
                 order.location_id = delivery.dropoff_location_id
-                order.status = LOGISTICS_ORDER_STATUSES["in_repair"]
+                order.status = LOGISTICS_ORDER_STATUSES["arrived_repair_point"]
         elif delivery.leg_type == "to_point":
             if next_status == "accepted":
-                order.status = LOGISTICS_ORDER_STATUSES["ready_for_dispatch"]
-            elif next_status == "picked_up":
-                order.status = LOGISTICS_ORDER_STATUSES["in_transit_to_point"]
+                order.status = LOGISTICS_ORDER_STATUSES["ready"]
+            elif next_status in {"picked_up", "in_transit"}:
+                order.status = LOGISTICS_ORDER_STATUSES["in_transit_to_pickup"]
             elif next_status == "delivered":
                 order.location_id = delivery.dropoff_location_id
-                order.status = LOGISTICS_ORDER_STATUSES["ready_for_pickup"]
+                order.status = LOGISTICS_ORDER_STATUSES["awaiting_pickup"]
 
     await db.commit()
 
@@ -173,18 +194,23 @@ async def create_delivery(
     if not pickup or not dropoff:
         raise ValueError("location_not_found")
 
+    fixed_fee = await get_courier_fixed_fee(db)
+
     delivery = LogisticsDelivery(
         order_id=int(order.id),
         pickup_location_id=int(pickup.id),
         dropoff_location_id=int(dropoff.id),
         leg_type=str(leg_type or "to_main"),
-        status="awaiting_pickup",
-        courier_fee=Decimal(str(courier_fee or 0)),
+        status="awaiting_dispatch",
+        courier_fee=fixed_fee,
         transport_cost=Decimal(str(transport_cost or 0)),
         payment_eligible=bool(payment_eligible),
         notes=str(notes or "").strip(),
     )
     db.add(delivery)
-    order.status = LOGISTICS_ORDER_STATUSES["awaiting_pickup"]
+    if str(leg_type or "") == "to_main":
+        order.status = LOGISTICS_ORDER_STATUSES["awaiting_delivery_to_repair"]
+    else:
+        order.status = LOGISTICS_ORDER_STATUSES["ready"]
     await db.commit()
     return delivery
