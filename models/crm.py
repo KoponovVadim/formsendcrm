@@ -144,6 +144,8 @@ class OrderItem(Base):
     service_id: Mapped[int | None] = mapped_column(ForeignKey("services.id"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(255), default="")
     quantity: Mapped[int] = mapped_column(Integer, default=1)
+    price_client: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
+    price_partner: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
     unit_price: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
     line_total: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
     status: Mapped[str] = mapped_column(String(30), default="new", index=True)

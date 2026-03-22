@@ -22,7 +22,15 @@ templates = Jinja2Templates(directory="templates")
 async def login_page(request: Request, user=Depends(get_current_user_optional)):
     if user:
         return RedirectResponse("/", status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    registration_disabled = str(request.query_params.get("registration", "")).strip().lower() == "disabled"
+    return templates.TemplateResponse(
+        "login.html",
+        {
+            "request": request,
+            "error": None,
+            "info": "Регистрация отключена. Логин и пароль выдает администратор." if registration_disabled else None,
+        },
+    )
 
 
 @router.post("/login", response_class=HTMLResponse)
@@ -36,11 +44,11 @@ async def login_submit(
     user = result.scalar_one_or_none()
     if not user or not verify_password(password, user.password_hash):
         return templates.TemplateResponse(
-            "login.html", {"request": request, "error": "Неверный email или пароль"}
+            "login.html", {"request": request, "error": "Неверный email или пароль", "info": None}
         )
     if not user.is_active:
         return templates.TemplateResponse(
-            "login.html", {"request": request, "error": "Аккаунт деактивирован"}
+            "login.html", {"request": request, "error": "Аккаунт деактивирован", "info": None}
         )
     token = create_access_token({"sub": str(user.id)})
     response = RedirectResponse("/", status_code=302)
@@ -59,7 +67,7 @@ async def logout():
 async def register_page(request: Request, user=Depends(get_current_user_optional)):
     if user:
         return RedirectResponse("/", status_code=302)
-    return templates.TemplateResponse("register.html", {"request": request, "error": None})
+    return RedirectResponse("/login?registration=disabled", status_code=302)
 
 
 @router.post("/register", response_class=HTMLResponse)
@@ -70,19 +78,4 @@ async def register_submit(
     password2: str = Form(...),
     db: AsyncSession = Depends(get_db),
 ):
-    if password != password2:
-        return templates.TemplateResponse(
-            "register.html", {"request": request, "error": "Пароли не совпадают"}
-        )
-    existing = await db.execute(select(User).where(User.email == email))
-    if existing.scalar_one_or_none():
-        return templates.TemplateResponse(
-            "register.html", {"request": request, "error": "Email уже зарегистрирован"}
-        )
-    user = User(email=email, password_hash=hash_password(password))
-    db.add(user)
-    await db.commit()
-    token = create_access_token({"sub": str(user.id)})
-    response = RedirectResponse("/", status_code=302)
-    response.set_cookie("access_token", token, httponly=True, samesite="lax")
-    return response
+    return RedirectResponse("/login?registration=disabled", status_code=302)

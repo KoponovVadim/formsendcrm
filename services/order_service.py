@@ -68,11 +68,16 @@ class OrderService:
             line_total = qty * price
             total += line_total
 
+            price_partner = Decimal(str(item_payload.get("price_partner", item_payload.get("partner_price", price))))
+            price_client = Decimal(str(item_payload.get("price_client", item_payload.get("client_price", price))))
+
             item = OrderItem(
                 order_id=order.id,
                 service_id=service_id,
                 title=str(item_payload.get("title") or (service.name if service else "")),
                 quantity=qty,
+                price_client=price_client,
+                price_partner=price_partner,
                 unit_price=price,
                 line_total=line_total,
                 status="new",

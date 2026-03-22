@@ -518,6 +518,8 @@ async def test_orders_create_then_get_uses_fixed_price_flow(async_client, db_ses
     assert order_data["total_amount"] == 300
     assert len(order_data["items"]) == 1
     assert order_data["items"][0]["unit_price"] == 150
+    assert order_data["items"][0]["price_client"] == 150
+    assert order_data["items"][0]["price_partner"] == 150
     assert isinstance(order_data["items"][0]["calculator_breakdown"], list)
     assert order_data["items"][0]["calculator_breakdown"] == []
 

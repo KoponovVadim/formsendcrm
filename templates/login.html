@@ -12,6 +12,9 @@
             {% if error %}
             <div class="alert alert-danger py-2">{{ error }}</div>
             {% endif %}
+            {% if info %}
+            <div class="alert alert-info py-2">{{ info }}</div>
+            {% endif %}
             <form method="POST" action="/login">
                 <div class="mb-3">
                     <label for="email" class="form-label">Email</label>
@@ -34,7 +37,7 @@
                 </button>
             </form>
             <div class="text-center mt-3">
-                <a href="/register" class="text-muted small">Создать аккаунт</a>
+                <span class="text-muted small">Новый аккаунт создает администратор.</span>
             </div>
         </div>
     </div>

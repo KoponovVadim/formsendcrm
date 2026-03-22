@@ -1,8 +1,10 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import can_manage_services, get_current_user
+from app.auth import can_manage_services, get_current_user, get_services_access_scope
 from app.database import get_db
 from models.crm import Location, LocationPrice, Service
 from repositories.crm_repository import CRMRepository
@@ -90,6 +92,20 @@ def _build_auto_partner_prices(price_rows: list[LocationPrice], locations_by_id:
         service_id = int(row.service_id)
         grouped.setdefault(service_id, {})[location_name] = float(row.price or 0)
     return grouped
+
+
+def _slugify_service(value: str) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    raw = re.sub(r"\s+", "-", raw)
+    raw = re.sub(r"[^a-z0-9а-яё\-_]", "-", raw)
+    raw = re.sub(r"-+", "-", raw).strip("-")
+    return raw[:150]
+
+
+def _normalize_service_name(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip())
 
 
 @router.get("/services")
@@ -235,6 +251,11 @@ async def get_point_prices(point_name: str, db: AsyncSession = Depends(get_db), 
     if not normalized_name:
         raise HTTPException(400, "point_name_required")
 
+    scope = get_services_access_scope(user)
+    allowed_points = scope.get("allowed_points") or []
+    if allowed_points and normalized_name not in allowed_points and not user.is_superuser:
+        raise HTTPException(403, "point_access_denied")
+
     location = (await db.execute(select(Location).where(Location.name == normalized_name))).scalar_one_or_none()
     if not location:
         raise HTTPException(404, "point_not_found")
@@ -270,7 +291,7 @@ async def get_point_prices(point_name: str, db: AsyncSession = Depends(get_db), 
                 "name": service.name,
                 "category": service.category,
                 "price": float(location_price_map.get(int(service.id), float(service.base_price or 0))),
-                "own_price": float(service.base_price or 0),
+                "own_price": None if bool(scope.get("hide_own_price")) else float(service.base_price or 0),
                 "base_price": float(service.base_price or 0),
                 "partner_prices": service_partner_prices,
             }
@@ -340,9 +361,12 @@ async def create_service(payload: dict, db: AsyncSession = Depends(get_db), user
     if not can_manage_services(user):
         raise HTTPException(403, "services_manage_access_denied")
 
+    normalized_name = _normalize_service_name(payload.get("name", ""))
+    normalized_slug = _slugify_service(payload.get("slug", "") or normalized_name)
+
     service = Service(
-        slug=str(payload.get("slug", "")).strip(),
-        name=str(payload.get("name", "")).strip(),
+        slug=normalized_slug,
+        name=normalized_name,
         category=str(payload.get("category", "repair")),
         base_price=payload.get("base_price", 0),
         calculator_schema=payload.get("calculator_schema") or {},
@@ -377,9 +401,9 @@ async def update_service(service_id: int, payload: dict, db: AsyncSession = Depe
         raise HTTPException(404, "service_not_found")
 
     if "slug" in payload:
-        service.slug = str(payload.get("slug", service.slug)).strip()
+        service.slug = _slugify_service(payload.get("slug", service.slug)) or service.slug
     if "name" in payload:
-        service.name = str(payload.get("name", service.name)).strip()
+        service.name = _normalize_service_name(payload.get("name", service.name)) or service.name
     if "category" in payload:
         service.category = str(payload.get("category", service.category)).strip()
     if "base_price" in payload:

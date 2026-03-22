@@ -211,6 +211,18 @@
         }
     });
 
+    document.body.addEventListener('htmx:afterSwap', function (event) {
+        const target = event && event.detail ? event.detail.target : null;
+        if (!target || target.id !== 'calc-locations-block') return;
+
+        const cheapest = target.querySelector('.calc-location-btn[data-cheapest="1"]');
+        const first = target.querySelector('.calc-location-btn');
+        const autoSelectBtn = cheapest || first;
+        if (autoSelectBtn) {
+            autoSelectBtn.click();
+        }
+    });
+
     document.body.addEventListener('input', function (event) {
         const serviceSearch = event.target.closest('#calc-service-search');
         if (serviceSearch) {

@@ -74,6 +74,7 @@
                             {% endif %}
                         </td>
                         <td class="text-end">
+                            <a href="/points/{{ location.id }}" class="btn btn-sm btn-outline-primary">Открыть</a>
                             <form method="post" action="/admin/locations/{{ location.id }}/toggle" class="d-inline">
                                 <button type="submit" class="btn btn-sm btn-outline-secondary">
                                     {% if location.is_active %}Отключить{% else %}Включить{% endif %}

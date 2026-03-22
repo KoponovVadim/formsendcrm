@@ -9,12 +9,29 @@
 </div>
 {% endif %}
 <div class="calc-locations-grid">
-    {% for location, point_price, own_price, orders_count, partner_prices in rows %}
-    <button type="button" class="btn btn-outline-dark text-start calc-location-btn" data-location-id="{{ location.id }}" data-point-price="{{ point_price }}" data-own-price="{{ own_price }}">
+    {% for location, point_price, own_price, orders_count, partner_prices, load_info, labels, is_cheapest in rows %}
+    <button
+        type="button"
+        class="btn btn-outline-dark text-start calc-location-btn"
+        data-location-id="{{ location.id }}"
+        data-point-price="{{ point_price }}"
+        data-own-price="{{ own_price }}"
+        data-cheapest="{{ 1 if is_cheapest else 0 }}"
+    >
         <div class="fw-semibold">{{ location.name }}</div>
         <div class="small fw-semibold">Цена точки: {{ point_price }} RUB</div>
+        {% if show_own_price %}
         <div class="small text-muted">Наша цена: {{ own_price }} RUB</div>
+        {% endif %}
+        <div class="small text-muted">Загрузка мастеров: {{ load_info.active_tasks }}/{{ load_info.capacity }} ({{ load_info.masters_count }})</div>
         <div class="small text-muted">В работе: {{ orders_count }}</div>
+        {% if labels %}
+        <div class="mt-1 d-flex flex-wrap gap-1">
+            {% for label in labels %}
+            <span class="badge text-bg-light border">{{ label }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
     </button>
     {% endfor %}
 </div>

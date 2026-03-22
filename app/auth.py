@@ -170,3 +170,69 @@ def can_manage_services(user: User) -> bool:
             return bool(services.get("manage"))
 
     return True
+
+
+def get_services_access_scope(user: User) -> dict:
+    """
+    Return additive V2 services access scope for UI/API filtering.
+
+    Supported permission keys:
+    - permissions["v2"]["services"]["partner_mode"] -> bool
+    - permissions["v2"]["services"]["location"] -> str
+    - permissions["v2"]["services"]["locations"] -> list[str]
+    - permissions["v2"]["services"]["hide_own_price"] -> bool
+    - permissions["v2_partner_mode"] -> bool
+    - permissions["v2_partner_location"] -> str
+    - permissions["v2_partner_locations"] -> list[str]
+    - permissions["v2_hide_own_price"] -> bool
+    """
+    if user.is_superuser:
+        return {
+            "partner_mode": False,
+            "allowed_points": [],
+            "hide_own_price": False,
+        }
+
+    permissions = get_user_permissions(user)
+    v2_services = {}
+    if isinstance(permissions.get("v2"), dict) and isinstance(permissions.get("v2").get("services"), dict):
+        v2_services = permissions.get("v2").get("services")
+
+    partner_mode = bool(v2_services.get("partner_mode") or permissions.get("v2_partner_mode"))
+
+    allowed_points: list[str] = []
+
+    locations_list = v2_services.get("locations")
+    if isinstance(locations_list, list):
+        allowed_points.extend([str(value).strip() for value in locations_list if str(value).strip()])
+
+    legacy_locations = permissions.get("v2_partner_locations")
+    if isinstance(legacy_locations, list):
+        allowed_points.extend([str(value).strip() for value in legacy_locations if str(value).strip()])
+
+    location_single = str(v2_services.get("location") or permissions.get("v2_partner_location") or "").strip()
+    if location_single:
+        allowed_points.append(location_single)
+
+    if partner_mode and not allowed_points:
+        # Fallback for existing partner accounts that keep point names in specialization.
+        allowed_points = get_user_specializations(user)
+
+    dedup = []
+    seen = set()
+    for point_name in allowed_points:
+        key = point_name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        dedup.append(point_name)
+
+    hide_own_price = bool(v2_services.get("hide_own_price") or permissions.get("v2_hide_own_price"))
+    if partner_mode:
+        hide_own_price = True if "hide_own_price" not in v2_services and "v2_hide_own_price" not in permissions else hide_own_price
+
+    return {
+        "partner_mode": partner_mode,
+        "allowed_points": dedup,
+        "hide_own_price": hide_own_price,
+    }

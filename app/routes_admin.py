@@ -560,6 +560,7 @@ async def users_list(
     _require_admin(user)
     users = (await db.execute(select(User).order_by(User.id))).scalars().all()
     roles = (await db.execute(select(Role).order_by(Role.id))).scalars().all()
+    locations = (await db.execute(select(Location).order_by(Location.name.asc()))).scalars().all()
     modules = await get_all_modules(db)
     all_modules = (await db.execute(select(ModuleConfig).order_by(ModuleConfig.sort_order))).scalars().all()
     specialization_catalog = _get_partner_specialization_catalog(all_modules)
@@ -567,9 +568,60 @@ async def users_list(
     return templates.TemplateResponse("admin/users.html", {
         "request": request, "user": user, "users": users,
         "roles": roles, "modules": modules,
+        "locations": locations,
         "specialization_catalog": specialization_catalog,
         "user_specializations_map": user_specializations_map,
     })
+
+
+@router.post("/users/create")
+async def users_create(
+    email: str = Form(""),
+    password: str = Form(""),
+    role_id: str = Form(""),
+    location_name: str = Form(""),
+    is_active: str = Form("on"),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_admin(user)
+
+    normalized_email = str(email or "").strip().lower()
+    if not normalized_email or "@" not in normalized_email:
+        return RedirectResponse("/admin/users?create_error=invalid_email", status_code=302)
+
+    normalized_password = str(password or "")
+    if len(normalized_password) < 6:
+        return RedirectResponse("/admin/users?create_error=weak_password", status_code=302)
+
+    existing = (await db.execute(select(User).where(User.email == normalized_email))).scalar_one_or_none()
+    if existing:
+        return RedirectResponse("/admin/users?create_error=email_exists", status_code=302)
+
+    parsed_role_id = int(role_id) if str(role_id or "").isdigit() else None
+    if parsed_role_id is not None:
+        role = (await db.execute(select(Role).where(Role.id == parsed_role_id))).scalar_one_or_none()
+        if not role:
+            parsed_role_id = None
+
+    assigned_point = str(location_name or "").strip()
+    if assigned_point:
+        location = (await db.execute(select(Location).where(Location.name == assigned_point))).scalar_one_or_none()
+        if not location:
+            assigned_point = ""
+
+    new_user = User(
+        email=normalized_email,
+        password_hash=hash_password(normalized_password),
+        role_id=parsed_role_id,
+        specialization=assigned_point,
+        is_active=str(is_active or "").lower() == "on",
+        is_superuser=False,
+    )
+    db.add(new_user)
+    await db.commit()
+
+    return RedirectResponse("/admin/users?created=1", status_code=302)
 
 
 @router.post("/users/{user_id}/update")

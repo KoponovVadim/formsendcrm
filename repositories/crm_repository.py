@@ -38,14 +38,24 @@ class CRMRepository:
         stmt = stmt.order_by(Service.name.asc()).limit(100)
         return list((await self.db.execute(stmt)).scalars().all())
 
-    async def list_locations_for_service(self, service_id: int) -> list[tuple[Location, float, float, int, list[dict]]]:
+    async def list_locations_for_service(
+        self,
+        service_id: int,
+        allowed_point_names: list[str] | None = None,
+    ) -> list[tuple[Location, float, float, int, list[dict], dict, list[str], bool]]:
+        stmt = (
+            select(Location, LocationPrice.price, Service.base_price)
+            .join(LocationPrice, LocationPrice.location_id == Location.id)
+            .join(Service, Service.id == LocationPrice.service_id)
+            .where(Location.is_active == True, LocationPrice.service_id == service_id)
+        )
+
+        if allowed_point_names:
+            stmt = stmt.where(Location.name.in_(allowed_point_names))
+
         rows = (
             await self.db.execute(
-                select(Location, LocationPrice.price, Service.base_price)
-                .join(LocationPrice, LocationPrice.location_id == Location.id)
-                .join(Service, Service.id == LocationPrice.service_id)
-                .where(Location.is_active == True, LocationPrice.service_id == service_id)
-                .order_by(Location.name.asc())
+                stmt.order_by(LocationPrice.price.asc(), Location.name.asc())
             )
         ).all()
 
@@ -74,6 +84,27 @@ class CRMRepository:
         ).all()
         count_map = {int(location_id): int(total) for location_id, total in counts}
 
+        exec_rows = (
+            await self.db.execute(
+                select(
+                    Executor.location_id,
+                    func.count(Executor.id),
+                    func.coalesce(func.sum(Executor.current_active_tasks), 0),
+                    func.coalesce(func.sum(Executor.max_active_tasks), 0),
+                )
+                .where(Executor.is_active == True, Executor.location_id.in_(location_ids))
+                .group_by(Executor.location_id)
+            )
+        ).all()
+        load_map = {
+            int(location_id): {
+                "masters_count": int(masters_count or 0),
+                "active_tasks": int(active_tasks or 0),
+                "capacity": int(capacity or 0),
+            }
+            for location_id, masters_count, active_tasks, capacity in exec_rows
+        }
+
         all_partner_prices = [
             {
                 "partner_name": str(location.name or "").strip(),
@@ -84,6 +115,8 @@ class CRMRepository:
             if str(location.name or "").strip()
         ]
 
+        min_price = min(float(price or 0) for _, price, _ in rows) if rows else 0
+
         return [
             (
                 location,
@@ -91,6 +124,19 @@ class CRMRepository:
                 float(base_price or 0),
                 count_map.get(int(location.id), 0),
                 all_partner_prices,
+                load_map.get(int(location.id), {"masters_count": 0, "active_tasks": 0, "capacity": 0}),
+                [
+                    *(["самый дешевый"] if float(price or 0) == min_price else []),
+                    *(
+                        ["перегружен"]
+                        if (
+                            load_map.get(int(location.id), {}).get("capacity", 0) > 0
+                            and (load_map.get(int(location.id), {}).get("active_tasks", 0) / max(load_map.get(int(location.id), {}).get("capacity", 1), 1)) >= 0.85
+                        )
+                        else []
+                    ),
+                ],
+                float(price or 0) == min_price,
             )
             for location, price, base_price in rows
         ]

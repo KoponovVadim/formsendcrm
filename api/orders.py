@@ -86,6 +86,8 @@ async def get_order(order_id: int, db: AsyncSession = Depends(get_db), user=Depe
                 "service_id": item.service_id,
                 "title": item.title,
                 "quantity": item.quantity,
+                "price_client": float(item.price_client or item.unit_price or 0),
+                "price_partner": float(item.price_partner or item.unit_price or 0),
                 "unit_price": float(item.unit_price or 0),
                 "line_total": float(item.line_total or 0),
                 "calculator_payload": item.calculator_payload,
