@@ -402,7 +402,7 @@ async def test_orders_create_endpoint_smoke_from_calculator_payload(async_client
     payload = response.json()
     assert isinstance(payload.get("id"), int)
     assert str(payload.get("order_no", "")).startswith("ORD-")
-    assert payload.get("status") == "new"
+    assert payload.get("status") == "Новый"
 
 
 async def test_orders_create_does_not_fail_when_backup_sync_raises(async_client, db_session, monkeypatch):
@@ -486,7 +486,7 @@ async def test_orders_create_saves_comment_field(async_client, db_session):
     assert payload["comment"] == comment_text
 
 
-async def test_orders_create_mirrors_to_orders_and_clients_modules(async_client, db_session):
+async def test_orders_create_mirrors_to_orders_clients_and_finance_modules(async_client, db_session):
     db_session.add_all([
         ModuleConfig(
             slug="orders",
@@ -519,6 +519,21 @@ async def test_orders_create_mirrors_to_orders_and_clients_modules(async_client,
                 {"name": "Примечание", "type": "TEXT"},
             ],
             sort_order=1,
+        ),
+        ModuleConfig(
+            slug="finance",
+            sheet_name="Финансы",
+            display_name="Финансы",
+            icon="bi-cash-stack",
+            enabled=True,
+            fields_schema=[
+                {"name": "№ заказа", "type": "TEXT"},
+                {"name": "Дата выдачи", "type": "DATE"},
+                {"name": "Цена для клиента", "type": "NUMBER"},
+                {"name": "Статус оплаты заказа", "type": "TEXT"},
+                {"name": "Статус оплаты сотруднику", "type": "TEXT"},
+            ],
+            sort_order=2,
         ),
     ])
 
@@ -557,13 +572,19 @@ async def test_orders_create_mirrors_to_orders_and_clients_modules(async_client,
     clients_records = (
         await db_session.execute(select(DynamicRecord).where(DynamicRecord.module_slug == "clients"))
     ).scalars().all()
+    finance_records = (
+        await db_session.execute(select(DynamicRecord).where(DynamicRecord.module_slug == "finance"))
+    ).scalars().all()
 
     assert len(orders_records) == 1
     assert len(clients_records) == 1
+    assert len(finance_records) == 1
     assert orders_records[0].data.get("№ заказа") == order_no
     assert orders_records[0].data.get("Клиент") == "Mirror Client"
     assert clients_records[0].data.get("№ заказа") == order_no
     assert clients_records[0].data.get("Телефон") == "79991112233"
+    assert finance_records[0].data.get("№ заказа") == order_no
+    assert finance_records[0].data.get("Цена для клиента") == "135"
 
 
 async def test_catalog_point_prices_auto_collect_partner_prices_from_points(async_client, db_session):
@@ -802,7 +823,7 @@ async def test_orders_create_then_get_uses_fixed_price_flow(async_client, db_ses
 
     assert create_response.status_code == 200
     created = create_response.json()
-    assert created["status"] == "new"
+    assert created["status"] == "Новый"
 
     get_response = await async_client.get(f"/api/v1/orders/{created['id']}")
     assert get_response.status_code == 200

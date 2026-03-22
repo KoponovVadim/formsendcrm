@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, cast
 
 from sqlalchemy import select
@@ -76,10 +77,12 @@ async def mirror_order_to_dynamic_modules(
     issue_text: str,
     master_name: str,
     status: str,
+    total_amount: Decimal | float | int = 0,
     warranty_until: str = "",
 ) -> None:
     orders_module = await _get_module_by_slug(db, "orders")
     clients_module = await _get_module_by_slug(db, "clients")
+    finance_module = await _get_module_by_slug(db, "finance")
 
     records_to_push: list[tuple[ModuleConfig, DynamicRecord]] = []
 
@@ -134,6 +137,30 @@ async def mirror_order_to_dynamic_modules(
             record.data = payload  # type: ignore[assignment]
             record.updated_at = datetime.now(timezone.utc)  # type: ignore[assignment]
             records_to_push.append((clients_module, record))
+
+    if finance_module:
+        order_no_field = _find_field_name(finance_module, ["№ заказа", "номер", "заказ"])
+        if order_no_field:
+            record = await _get_or_create_record_by_order_no(db, "finance", order_no_field, order_no)
+            payload = dict(cast(dict[str, Any], record.data or {}))
+
+            issued_at_field = _find_field_name(finance_module, ["Дата выдачи", "дата"])
+            client_price_field = _find_field_name(finance_module, ["Цена для клиента", "цена", "сумма"])
+            status_order_payment_field = _find_field_name(finance_module, ["Статус оплаты заказа", "оплаты заказа"])
+            status_staff_payment_field = _find_field_name(finance_module, ["Статус оплаты сотруднику", "оплаты сотруднику"])
+
+            if issued_at_field and issued_at_field not in payload:
+                payload[issued_at_field] = ""
+            if client_price_field:
+                payload[client_price_field] = str(total_amount)
+            if status_order_payment_field and status_order_payment_field not in payload:
+                payload[status_order_payment_field] = ""
+            if status_staff_payment_field and status_staff_payment_field not in payload:
+                payload[status_staff_payment_field] = ""
+
+            record.data = payload  # type: ignore[assignment]
+            record.updated_at = datetime.now(timezone.utc)  # type: ignore[assignment]
+            records_to_push.append((finance_module, record))
 
     if records_to_push:
         await db.commit()

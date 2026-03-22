@@ -8,9 +8,10 @@ from sqlalchemy import select
 
 from app.auth import get_current_user, get_current_user_optional
 from app.database import get_db
-from app.models import Role, User
+from app.models import ModuleConfig, Role, User
 from app.routes_admin import router as admin_router
 from app.routes_auth import router as auth_router
+from app.routes_modules import router as modules_router
 from models.crm import Location
 
 
@@ -50,7 +51,7 @@ async def test_admin_creates_user_with_role_and_point(db_session: Any):
         yield db_session
 
     async def _override_get_current_user():
-        return SimpleNamespace(id=1, is_superuser=True)
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
 
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_current_user] = _override_get_current_user
@@ -80,3 +81,40 @@ async def test_admin_creates_user_with_role_and_point(db_session: Any):
     assert created.role_id == role.id
     assert created.specialization == location.name
     assert created.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_module_page_has_pull_and_push_sync_buttons_for_superuser(db_session: Any):
+    app = FastAPI()
+    app.include_router(modules_router)
+    app.include_router(admin_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    db_session.add(
+        ModuleConfig(
+            slug="orders",
+            sheet_name="Заказы",
+            display_name="Заказы",
+            icon="bi-clipboard-check",
+            enabled=True,
+            fields_schema=[{"name": "№ заказа", "type": "TEXT"}],
+            sort_order=0,
+        )
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get("/modules/orders")
+
+    assert response.status_code == 200
+    html = response.text
+    assert '/admin/sync/pull/orders' in html
+    assert '/admin/sync/push/orders' in html

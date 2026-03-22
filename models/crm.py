@@ -121,7 +121,7 @@ class Order(Base):
     order_no: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
     location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), nullable=True, index=True)
-    status: Mapped[str] = mapped_column(String(30), default="new", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="Новый", index=True)
     priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
     source_channel: Mapped[str] = mapped_column(String(60), default="manual", index=True)
     comment: Mapped[str] = mapped_column(Text, default="")

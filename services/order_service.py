@@ -11,6 +11,9 @@ from services.assignment_service import choose_best_executor
 from services.audit_service import write_audit
 
 
+DEFAULT_ORDER_STATUS = "Новый"
+
+
 class OrderService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
@@ -28,7 +31,7 @@ class OrderService:
             order_no=str(payload.get("order_no") or self._generate_order_no()),
             client_id=client.id,
             location_id=int(payload.get("location_id", 0) or 0) or None,
-            status=str(payload.get("status", "new")),
+            status=str(payload.get("status") or DEFAULT_ORDER_STATUS),
             priority=int(payload.get("priority", 0)),
             source_channel=str(payload.get("source_channel", "manual")),
             comment=str(payload.get("comment") or payload.get("issue") or "").strip(),
@@ -130,7 +133,8 @@ class OrderService:
                 device_name=first_item_title,
                 issue_text=issue_text,
                 master_name=assigned_master_name,
-                status=str(order.status or "new"),
+                status=str(order.status or DEFAULT_ORDER_STATUS),
+                total_amount=total,
                 warranty_until=str(payload.get("warranty_until") or ""),
             )
         except Exception:
