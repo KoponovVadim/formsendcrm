@@ -61,7 +61,7 @@
                     </div>
                     <div class="col-12 col-md-6">
                         <label class="form-label">Категория</label>
-                        <input id="service-category" class="form-control" value="repair" maxlength="30">
+                        <input id="service-category" class="form-control" maxlength="30" placeholder="Например, Телефоны">
                     </div>
                     <div class="col-12">
                         <label class="form-label">Название</label>
@@ -121,39 +121,36 @@
         <div class="card border-0 shadow-sm">
             <div class="card-body">
                 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-                    <h5 class="mb-0">Точки и их прайс-листы</h5>
+                    <h5 class="mb-0">Матрица цен по точкам</h5>
                     <div class="d-flex gap-2 align-items-center">
-                        <select id="point-manager-select" class="form-select form-select-sm" style="min-width: 240px;">
-                            <option value="">Выберите точку...</option>
-                        </select>
-                        <input id="point-manager-new" class="form-control form-control-sm" placeholder="Новая точка" style="width: 220px;">
-                        <button id="point-manager-add" class="btn btn-sm btn-outline-primary">Добавить точку</button>
-                        <button id="point-manager-delete" class="btn btn-sm btn-outline-danger">Удалить точку</button>
+                        <div id="price-category-filter" class="btn-group btn-group-sm" role="group" aria-label="Фильтр категорий">
+                            <button type="button" class="btn btn-outline-secondary active" data-category="all">Все</button>
+                            <button type="button" class="btn btn-outline-secondary" data-category="Приставки">Приставки</button>
+                            <button type="button" class="btn btn-outline-secondary" data-category="Геймпады">Геймпады</button>
+                            <button type="button" class="btn btn-outline-secondary" data-category="Телефоны">Телефоны</button>
+                        </div>
+                        <button id="point-prices-reload" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-clockwise"></i></button>
                     </div>
                 </div>
 
-                <div class="table-responsive">
+                <div class="table-responsive d-none d-md-block point-prices-table-wrap">
                     <table class="table table-sm align-middle mb-0" id="point-prices-table">
                         <thead class="table-light">
                             <tr>
-                                <th>Услуга</th>
-                                <th>Категория</th>
-                                <th>Наша цена</th>
-                                <th>Цена точки</th>
+                                <th>Загрузка...</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr>
-                                <td colspan="4" class="text-muted">Выберите точку для редактирования прайса.</td>
+                                <td class="text-muted">Загрузка матрицы цен...</td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
 
+                <div id="point-prices-cards" class="d-md-none vstack gap-2"></div>
+
                 <div class="mt-3 d-flex gap-2 align-items-center">
-                    <button id="point-prices-save" class="btn btn-sm btn-success" disabled>
-                        <i class="bi bi-save me-1"></i>Сохранить прайс точки
-                    </button>
                     <span id="point-manager-status" class="small text-muted"></span>
                 </div>
             </div>
@@ -173,12 +170,12 @@
     const reloadBtn = document.getElementById('services-reload');
     const newBtn = document.getElementById('service-new');
     const form = document.getElementById('service-editor-form');
-    const pointSelect = document.getElementById('point-manager-select');
-    const pointNewInput = document.getElementById('point-manager-new');
-    const pointAddBtn = document.getElementById('point-manager-add');
-    const pointDeleteBtn = document.getElementById('point-manager-delete');
+    const priceCategoryFilter = document.getElementById('price-category-filter');
+    const pointPricesReloadBtn = document.getElementById('point-prices-reload');
+    const pointPricesTable = document.getElementById('point-prices-table');
+    const pointPricesTableHead = pointPricesTable.querySelector('thead');
     const pointPricesTableBody = document.querySelector('#point-prices-table tbody');
-    const pointPricesSaveBtn = document.getElementById('point-prices-save');
+    const pointPricesCards = document.getElementById('point-prices-cards');
     const pointStatusEl = document.getElementById('point-manager-status');
     const pointsAvailabilityEl = document.getElementById('service-points-availability');
 
@@ -197,6 +194,9 @@
 
     let services = [];
     let allPoints = [];
+    let matrixData = { points: [], services: [], can_edit_own_price: false, show_own_price: true };
+    let selectedMatrixCategory = 'all';
+    const matrixDebounceTimers = new Map();
 
     function getCurrentSelectedService() {
         const id = Number(idInput.value || 0);
@@ -385,7 +385,7 @@
         idInput.value = '';
         slugInput.value = '';
         nameInput.value = '';
-        categoryInput.value = 'repair';
+        categoryInput.value = '';
         basePriceInput.value = '0';
         isActiveInput.checked = true;
         currencyInput.value = 'RUB';
@@ -403,7 +403,7 @@
         idInput.value = String(service.id || '');
         slugInput.value = service.slug || '';
         nameInput.value = service.name || '';
-        categoryInput.value = service.category || 'repair';
+        categoryInput.value = service.category || '';
         basePriceInput.value = Number(service.base_price || 0);
         isActiveInput.checked = Boolean(service.is_active);
         const schema = service.calculator_schema || {};
@@ -446,60 +446,204 @@
         });
     }
 
-    function renderPointRows(pointPrices) {
-        if (!Array.isArray(pointPrices) || !pointPrices.length) {
-            pointPricesTableBody.innerHTML = '<tr><td colspan="4" class="text-muted">Нет услуг для редактирования.</td></tr>';
-            pointPricesSaveBtn.disabled = true;
-            return;
+    function getFilteredMatrixServices() {
+        const selected = String(selectedMatrixCategory || 'all').trim().toLowerCase();
+        const rows = Array.isArray(matrixData.services) ? matrixData.services : [];
+        if (selected === 'all') {
+            return rows;
         }
-
-        pointPricesTableBody.innerHTML = pointPrices.map(function (item) {
-            const ownPrice = Number(item.own_price ?? item.base_price ?? 0);
-            return `
-                <tr>
-                    <td>${item.name || ''}</td>
-                    <td>${item.category || ''}</td>
-                    <td>${formatMoney(ownPrice)} RUB</td>
-                    <td style="max-width: 220px;">
-                        <input
-                            type="number"
-                            step="0.01"
-                            class="form-control form-control-sm point-price-input"
-                            data-service-id="${item.service_id}"
-                            value="${Number(item.price || 0)}"
-                        >
-                    </td>
-                </tr>
-            `;
-        }).join('');
-
-        pointPricesSaveBtn.disabled = false;
+        return rows.filter(function (item) {
+            return String(item.category || '').trim().toLowerCase() === selected;
+        });
     }
 
-    function renderPoints(points) {
-        const previous = pointSelect.value;
-        pointSelect.innerHTML = '<option value="">Выберите точку...</option>';
-        allPoints = Array.isArray(points) ? points : [];
+    function setMatrixCellState(cell, state) {
+        if (!cell) return;
+        cell.classList.remove('matrix-cell-updating', 'matrix-cell-saved', 'matrix-cell-error');
+        if (state) {
+            cell.classList.add(state);
+        }
+    }
 
-        (points || []).forEach(function (point) {
-            const option = document.createElement('option');
-            option.value = point;
-            option.textContent = point;
-            pointSelect.appendChild(option);
-        });
+    function renderPriceMatrix() {
+        const points = Array.isArray(matrixData.points) ? matrixData.points : [];
+        const rows = getFilteredMatrixServices();
+        const showOwnPrice = Boolean(matrixData.show_own_price);
+        const canEditOwnPrice = Boolean(matrixData.can_edit_own_price);
 
+        allPoints = points.slice();
         const currentService = getCurrentSelectedService();
         if (currentService) {
             renderPointsAvailability(Array.isArray(currentService.enabled_points) ? currentService.enabled_points : []);
         } else {
             renderPointsAvailability(allPoints);
-            pointsAvailabilityEl.querySelectorAll('.service-point-check').forEach(function (input) {
-                input.checked = true;
-            });
+            pointsAvailabilityEl.querySelectorAll('.service-point-check').forEach(function (input) { input.checked = true; });
         }
 
-        if (previous && (points || []).includes(previous)) {
-            pointSelect.value = previous;
+        const ownHeader = showOwnPrice ? '<th style="min-width: 170px;">Наша цена</th>' : '';
+        const pointHeaders = points.map(function (point) {
+            return `<th style="min-width: 220px;">${point}</th>`;
+        }).join('');
+
+        pointPricesTableHead.innerHTML = `
+            <tr>
+                <th style="min-width: 240px;">Услуга</th>
+                <th style="min-width: 140px;">Категория</th>
+                ${ownHeader}
+                ${pointHeaders}
+            </tr>
+        `;
+
+        if (!rows.length) {
+            const colSpan = 2 + (showOwnPrice ? 1 : 0) + points.length;
+            pointPricesTableBody.innerHTML = `<tr><td colspan="${colSpan}" class="text-muted">Нет услуг для выбранной категории.</td></tr>`;
+            pointPricesCards.innerHTML = '<div class="small text-muted">Нет услуг для выбранной категории.</div>';
+            return;
+        }
+
+        let lastCategory = '';
+        const tableRows = [];
+        rows.forEach(function (service) {
+            const currentCategory = String(service.category || '').trim();
+            if (currentCategory && currentCategory !== lastCategory) {
+                lastCategory = currentCategory;
+                tableRows.push(`<tr class="table-light"><td colspan="${2 + (showOwnPrice ? 1 : 0) + points.length}" class="fw-semibold">${currentCategory}</td></tr>`);
+            }
+
+            const ownPriceCell = showOwnPrice
+                ? `<td class="matrix-cell" data-cell-key="own::${service.service_id}">${canEditOwnPrice
+                    ? `<input type="number" step="0.01" class="form-control form-control-sm own-price-input" data-service-id="${service.service_id}" value="${Number(service.own_price || 0)}">`
+                    : `<span>${formatMoney(service.own_price)} RUB</span>`
+                }</td>`
+                : '';
+
+            const pointCells = points.map(function (point) {
+                const hasPrice = Object.prototype.hasOwnProperty.call(service.point_prices || {}, point);
+                const priceValue = hasPrice ? Number((service.point_prices || {})[point] || 0) : 0;
+                return `
+                    <td class="matrix-cell" data-cell-key="${service.service_id}::${point}">
+                        <div class="d-flex align-items-center gap-2">
+                            <input type="checkbox" class="form-check-input matrix-enable-input" data-service-id="${service.service_id}" data-point="${point}" ${hasPrice ? 'checked' : ''}>
+                            <input type="number" step="0.01" min="0" class="form-control form-control-sm matrix-price-input" data-service-id="${service.service_id}" data-point="${point}" value="${priceValue}" ${hasPrice ? '' : 'disabled'}>
+                        </div>
+                    </td>
+                `;
+            }).join('');
+
+            tableRows.push(`
+                <tr>
+                    <td>${service.name || ''}</td>
+                    <td>${service.category || ''}</td>
+                    ${ownPriceCell}
+                    ${pointCells}
+                </tr>
+            `);
+        });
+        pointPricesTableBody.innerHTML = tableRows.join('');
+
+        pointPricesCards.innerHTML = rows.map(function (service) {
+            const ownPriceBlock = showOwnPrice
+                ? `<div class="small mb-2"><span class="text-muted">Наша цена:</span> ${canEditOwnPrice
+                    ? `<input type="number" step="0.01" class="form-control form-control-sm mt-1 own-price-input" data-service-id="${service.service_id}" value="${Number(service.own_price || 0)}">`
+                    : `${formatMoney(service.own_price)} RUB`
+                }</div>`
+                : '';
+
+            const pointRows = points.map(function (point) {
+                const hasPrice = Object.prototype.hasOwnProperty.call(service.point_prices || {}, point);
+                const priceValue = hasPrice ? Number((service.point_prices || {})[point] || 0) : 0;
+                return `
+                    <div class="d-flex align-items-center gap-2 mb-2 matrix-cell" data-cell-key="${service.service_id}::${point}">
+                        <input type="checkbox" class="form-check-input matrix-enable-input" data-service-id="${service.service_id}" data-point="${point}" ${hasPrice ? 'checked' : ''}>
+                        <div class="flex-grow-1">
+                            <div class="small">${point}</div>
+                            <input type="number" step="0.01" min="0" class="form-control form-control-sm matrix-price-input" data-service-id="${service.service_id}" data-point="${point}" value="${priceValue}" ${hasPrice ? '' : 'disabled'}>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <div class="card border-0 shadow-sm">
+                    <div class="card-body">
+                        <div class="fw-semibold">${service.name || ''}</div>
+                        <div class="small text-muted mb-2">${service.category || ''}</div>
+                        ${ownPriceBlock}
+                        ${pointRows}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    async function loadPriceMatrix() {
+        setPointStatus('Загрузка матрицы цен...', false);
+        try {
+            const response = await fetch('/api/v1/catalog/prices/matrix');
+            if (!response.ok) {
+                throw new Error('matrix_load_failed');
+            }
+            matrixData = await response.json();
+            renderPriceMatrix();
+            setPointStatus(`Услуг: ${getFilteredMatrixServices().length}. Точек: ${(matrixData.points || []).length}.`, false);
+        } catch (_err) {
+            pointPricesTableHead.innerHTML = '<tr><th>Ошибка</th></tr>';
+            pointPricesTableBody.innerHTML = '<tr><td class="text-danger">Не удалось загрузить матрицу цен.</td></tr>';
+            pointPricesCards.innerHTML = '<div class="small text-danger">Не удалось загрузить матрицу цен.</div>';
+            setPointStatus('Не удалось загрузить матрицу цен.', true);
+        }
+    }
+
+    async function saveMatrixCell(payload, cellKey) {
+        const cells = document.querySelectorAll(`[data-cell-key="${cellKey}"]`);
+        cells.forEach(function (cell) { setMatrixCellState(cell, 'matrix-cell-updating'); });
+        try {
+            const response = await fetch('/api/v1/catalog/prices/matrix/cell', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            if (!response.ok) {
+                throw new Error('matrix_save_failed');
+            }
+            const result = await response.json();
+            if (result && result.ok) {
+                setPointStatus('Изменения сохранены.', false);
+                cells.forEach(function (cell) { setMatrixCellState(cell, 'matrix-cell-saved'); });
+                window.setTimeout(function () {
+                    cells.forEach(function (cell) { setMatrixCellState(cell, ''); });
+                }, 900);
+            }
+        } catch (_err) {
+            setPointStatus('Ошибка сохранения. Проверьте доступ и соединение.', true);
+            cells.forEach(function (cell) { setMatrixCellState(cell, 'matrix-cell-error'); });
+        }
+    }
+
+    async function saveOwnPrice(serviceId, value, cellKey) {
+        const cells = document.querySelectorAll(`[data-cell-key="${cellKey}"]`);
+        cells.forEach(function (cell) { setMatrixCellState(cell, 'matrix-cell-updating'); });
+        try {
+            const response = await fetch(`/api/v1/catalog/services/${serviceId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ base_price: Number(value || 0) }),
+            });
+            if (!response.ok) {
+                throw new Error('own_price_save_failed');
+            }
+            const target = (matrixData.services || []).find(function (item) { return Number(item.service_id) === Number(serviceId); });
+            if (target) {
+                target.own_price = Number(value || 0);
+            }
+            cells.forEach(function (cell) { setMatrixCellState(cell, 'matrix-cell-saved'); });
+            setPointStatus('Наша цена обновлена.', false);
+            window.setTimeout(function () {
+                cells.forEach(function (cell) { setMatrixCellState(cell, ''); });
+            }, 900);
+        } catch (_err) {
+            setPointStatus('Наша цена редактируется только админом.', true);
+            cells.forEach(function (cell) { setMatrixCellState(cell, 'matrix-cell-error'); });
         }
     }
 
@@ -509,128 +653,14 @@
             if (!response.ok) {
                 throw new Error('points_load_failed');
             }
-            const points = await response.json();
-            renderPoints(points);
-        } catch (_err) {
-            setPointStatus('Не удалось загрузить список точек.', true);
-        }
-    }
-
-    async function loadPointPrices(pointName) {
-        if (!pointName) {
-            pointPricesTableBody.innerHTML = '<tr><td colspan="4" class="text-muted">Выберите точку для редактирования прайса.</td></tr>';
-            pointPricesSaveBtn.disabled = true;
-            return;
-        }
-
-        setPointStatus('Загрузка прайса точки...', false);
-        try {
-            const response = await fetch(`/api/v1/catalog/points/${encodeURIComponent(pointName)}/prices`);
-            if (!response.ok) {
-                throw new Error('point_prices_load_failed');
+            allPoints = await response.json();
+            const currentService = getCurrentSelectedService();
+            renderPointsAvailability(currentService && Array.isArray(currentService.enabled_points) ? currentService.enabled_points : allPoints);
+            if (!currentService) {
+                pointsAvailabilityEl.querySelectorAll('.service-point-check').forEach(function (input) { input.checked = true; });
             }
-            const data = await response.json();
-            renderPointRows(data.prices || []);
-            setPointStatus(`Загружено позиций: ${(data.prices || []).length}.`, false);
         } catch (_err) {
-            pointPricesTableBody.innerHTML = '<tr><td colspan="4" class="text-danger">Не удалось загрузить прайс точки.</td></tr>';
-            pointPricesSaveBtn.disabled = true;
-            setPointStatus('Не удалось загрузить прайс точки.', true);
-        }
-    }
-
-    async function savePointPrices() {
-        const pointName = (pointSelect.value || '').trim();
-        if (!pointName) {
-            setPointStatus('Сначала выберите точку.', true);
-            return;
-        }
-
-        const prices = [];
-        pointPricesTableBody.querySelectorAll('.point-price-input').forEach(function (input) {
-            prices.push({
-                service_id: Number(input.dataset.serviceId || 0),
-                price: Number(input.value || 0),
-            });
-        });
-
-        setPointStatus('Сохраняем прайс точки...', false);
-        pointPricesSaveBtn.disabled = true;
-
-        try {
-            const response = await fetch(`/api/v1/catalog/points/${encodeURIComponent(pointName)}/prices`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prices }),
-            });
-            if (!response.ok) {
-                throw new Error('point_prices_save_failed');
-            }
-            setPointStatus('Прайс точки сохранен.', false);
-            await loadServices();
-            await loadPointPrices(pointName);
-        } catch (_err) {
-            setPointStatus('Не удалось сохранить прайс точки.', true);
-            pointPricesSaveBtn.disabled = false;
-        }
-    }
-
-    async function addPoint() {
-        const name = (pointNewInput.value || '').trim();
-        if (!name) {
-            setPointStatus('Введите название новой точки.', true);
-            return;
-        }
-
-        setPointStatus('Добавляем точку...', false);
-
-        try {
-            const response = await fetch('/api/v1/catalog/points', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name }),
-            });
-            if (!response.ok) {
-                throw new Error('point_add_failed');
-            }
-
-            pointNewInput.value = '';
-            await loadPoints();
-            pointSelect.value = name;
-            await loadPointPrices(name);
-            setPointStatus('Точка добавлена.', false);
-        } catch (_err) {
-            setPointStatus('Не удалось добавить точку.', true);
-        }
-    }
-
-    async function deletePoint() {
-        const pointName = (pointSelect.value || '').trim();
-        if (!pointName) {
-            setPointStatus('Выберите точку для удаления.', true);
-            return;
-        }
-
-        if (!window.confirm(`Удалить точку "${pointName}" из прайсов всех услуг?`)) {
-            return;
-        }
-
-        setPointStatus('Удаляем точку...', false);
-
-        try {
-            const response = await fetch(`/api/v1/catalog/points/${encodeURIComponent(pointName)}`, {
-                method: 'DELETE',
-            });
-            if (!response.ok) {
-                throw new Error('point_delete_failed');
-            }
-
-            await loadPoints();
-            await loadServices();
-            await loadPointPrices('');
-            setPointStatus('Точка удалена.', false);
-        } catch (_err) {
-            setPointStatus('Не удалось удалить точку.', true);
+            pointsAvailabilityEl.innerHTML = '<div class="small text-muted">Не удалось загрузить список точек.</div>';
         }
     }
 
@@ -668,7 +698,7 @@
         const payload = {
             slug: slugInput.value.trim(),
             name: nameInput.value.trim(),
-            category: categoryInput.value.trim() || 'repair',
+            category: categoryInput.value.trim(),
             base_price: Number(basePriceInput.value || 0),
             is_active: Boolean(isActiveInput.checked),
             calculator_schema: schema,
@@ -749,16 +779,93 @@
     currencyInput.addEventListener('input', refreshSchemaPreview);
     roundToInput.addEventListener('input', refreshSchemaPreview);
 
-    pointSelect.addEventListener('change', function () {
-        loadPointPrices((pointSelect.value || '').trim());
+    priceCategoryFilter.addEventListener('click', function (event) {
+        const button = event.target.closest('[data-category]');
+        if (!button) return;
+        selectedMatrixCategory = String(button.dataset.category || 'all');
+        priceCategoryFilter.querySelectorAll('[data-category]').forEach(function (el) { el.classList.remove('active'); });
+        button.classList.add('active');
+        renderPriceMatrix();
+        setPointStatus(`Показана категория: ${selectedMatrixCategory}.`, false);
     });
-    pointPricesSaveBtn.addEventListener('click', savePointPrices);
-    pointAddBtn.addEventListener('click', addPoint);
-    pointDeleteBtn.addEventListener('click', deletePoint);
+
+    pointPricesReloadBtn.addEventListener('click', loadPriceMatrix);
+
+    document.addEventListener('change', function (event) {
+        const checkbox = event.target.closest('.matrix-enable-input');
+        if (!checkbox) return;
+
+        const serviceId = Number(checkbox.dataset.serviceId || 0);
+        const point = String(checkbox.dataset.point || '').trim();
+        const enabled = Boolean(checkbox.checked);
+        const cellKey = `${serviceId}::${point}`;
+
+        const linkedInputs = document.querySelectorAll(`.matrix-price-input[data-service-id="${serviceId}"][data-point="${point}"]`);
+        linkedInputs.forEach(function (input) {
+            input.disabled = !enabled;
+            if (!enabled) {
+                input.value = '0';
+            }
+        });
+
+        const sourceInput = Array.from(linkedInputs)[0];
+        const price = sourceInput ? Number(sourceInput.value || 0) : 0;
+        saveMatrixCell({ service_id: serviceId, point: point, enabled: enabled, price: price }, cellKey);
+
+        const targetService = (matrixData.services || []).find(function (item) { return Number(item.service_id) === serviceId; });
+        if (targetService) {
+            targetService.point_prices = targetService.point_prices || {};
+            if (enabled) {
+                targetService.point_prices[point] = price;
+            } else {
+                delete targetService.point_prices[point];
+            }
+        }
+    });
+
+    document.addEventListener('input', function (event) {
+        const pointInput = event.target.closest('.matrix-price-input');
+        if (pointInput) {
+            const serviceId = Number(pointInput.dataset.serviceId || 0);
+            const point = String(pointInput.dataset.point || '').trim();
+            if (!serviceId || !point || pointInput.disabled) return;
+
+            const key = `point::${serviceId}::${point}`;
+            if (matrixDebounceTimers.has(key)) {
+                window.clearTimeout(matrixDebounceTimers.get(key));
+            }
+
+            const value = Number(pointInput.value || 0);
+            matrixDebounceTimers.set(key, window.setTimeout(function () {
+                saveMatrixCell({ service_id: serviceId, point: point, price: value }, `${serviceId}::${point}`);
+                const targetService = (matrixData.services || []).find(function (item) { return Number(item.service_id) === serviceId; });
+                if (targetService) {
+                    targetService.point_prices = targetService.point_prices || {};
+                    targetService.point_prices[point] = value;
+                }
+            }, 500));
+            return;
+        }
+
+        const ownInput = event.target.closest('.own-price-input');
+        if (!ownInput) return;
+        const serviceId = Number(ownInput.dataset.serviceId || 0);
+        if (!serviceId) return;
+
+        const key = `own::${serviceId}`;
+        if (matrixDebounceTimers.has(key)) {
+            window.clearTimeout(matrixDebounceTimers.get(key));
+        }
+        const value = Number(ownInput.value || 0);
+        matrixDebounceTimers.set(key, window.setTimeout(function () {
+            saveOwnPrice(serviceId, value, `own::${serviceId}`);
+        }, 500));
+    });
 
     resetForm();
     loadServices();
     loadPoints();
+    loadPriceMatrix();
 })();
 </script>
 {% endblock %}

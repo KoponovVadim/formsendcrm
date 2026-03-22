@@ -474,6 +474,137 @@ async def test_catalog_points_endpoints_denied_without_manage_access(async_clien
     assert delete_response.status_code == 403
 
 
+async def test_catalog_prices_matrix_cell_enable_creates_row(async_client, db_session):
+    service = Service(slug="matrix-enable", name="Matrix Enable", category="Телефоны", is_active=True, base_price=100, calculator_schema={"fields": []})
+    point = Location(name="Matrix Point", is_active=True)
+    db_session.add_all([service, point])
+    await db_session.commit()
+
+    response = await async_client.patch(
+        "/api/v1/catalog/prices/matrix/cell",
+        json={"service_id": service.id, "point": point.name, "enabled": True, "price": 345},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["enabled"] is True
+    assert payload["price"] == 345
+
+    row = (
+        await db_session.execute(
+            select(LocationPrice).where(LocationPrice.location_id == point.id, LocationPrice.service_id == service.id)
+        )
+    ).scalar_one_or_none()
+    assert row is not None
+    assert float(row.price or 0) == 345
+
+
+async def test_catalog_prices_matrix_cell_disable_deletes_row(async_client, db_session):
+    service = Service(slug="matrix-disable", name="Matrix Disable", category="Геймпады", is_active=True, base_price=100, calculator_schema={"fields": []})
+    point = Location(name="Matrix Point Off", is_active=True)
+    db_session.add_all([service, point])
+    await db_session.flush()
+    db_session.add(LocationPrice(location_id=point.id, service_id=service.id, price=222))
+    await db_session.commit()
+
+    response = await async_client.patch(
+        "/api/v1/catalog/prices/matrix/cell",
+        json={"service_id": service.id, "point": point.name, "enabled": False},
+    )
+    assert response.status_code == 200
+    assert response.json()["enabled"] is False
+
+    row = (
+        await db_session.execute(
+            select(LocationPrice).where(LocationPrice.location_id == point.id, LocationPrice.service_id == service.id)
+        )
+    ).scalar_one_or_none()
+    assert row is None
+
+
+async def test_catalog_prices_matrix_cell_updates_price(async_client, db_session):
+    service = Service(slug="matrix-update", name="Matrix Update", category="Приставки", is_active=True, base_price=100, calculator_schema={"fields": []})
+    point = Location(name="Matrix Point Update", is_active=True)
+    db_session.add_all([service, point])
+    await db_session.flush()
+    db_session.add(LocationPrice(location_id=point.id, service_id=service.id, price=500))
+    await db_session.commit()
+
+    response = await async_client.patch(
+        "/api/v1/catalog/prices/matrix/cell",
+        json={"service_id": service.id, "point": point.name, "price": 777},
+    )
+    assert response.status_code == 200
+    assert response.json()["price"] == 777
+
+    row = (
+        await db_session.execute(
+            select(LocationPrice).where(LocationPrice.location_id == point.id, LocationPrice.service_id == service.id)
+        )
+    ).scalar_one_or_none()
+    assert row is not None
+    assert float(row.price or 0) == 777
+
+
+async def test_catalog_prices_matrix_filters_by_category(async_client, db_session):
+    service_phone = Service(slug="matrix-phone", name="Phone Svc", category="Телефоны", is_active=True, base_price=100, calculator_schema={"fields": []})
+    service_pad = Service(slug="matrix-pad", name="Pad Svc", category="Геймпады", is_active=True, base_price=100, calculator_schema={"fields": []})
+    point = Location(name="Matrix Point Filter", is_active=True)
+    db_session.add_all([service_phone, service_pad, point])
+    await db_session.flush()
+    db_session.add(LocationPrice(location_id=point.id, service_id=service_phone.id, price=1000))
+    db_session.add(LocationPrice(location_id=point.id, service_id=service_pad.id, price=2000))
+    await db_session.commit()
+
+    response = await async_client.get("/api/v1/catalog/prices/matrix?category=Телефоны")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["category"] == "телефоны"
+    assert len(payload["services"]) == 1
+    assert payload["services"][0]["slug"] == "matrix-phone"
+
+
+async def test_catalog_prices_matrix_partner_can_edit_only_own_point(async_client, db_session, api_app):
+    service = Service(slug="matrix-partner", name="Partner Svc", category="Телефоны", is_active=True, base_price=100, calculator_schema={"fields": []})
+    own_point = Location(name="Partner Own Point", is_active=True)
+    other_point = Location(name="Partner Other Point", is_active=True)
+    db_session.add_all([service, own_point, other_point])
+    await db_session.commit()
+
+    async def _partner_user():
+        return SimpleNamespace(
+            id=55,
+            is_superuser=False,
+            role=SimpleNamespace(
+                permissions={
+                    "v2": {
+                        "services": {
+                            "manage": False,
+                            "partner_mode": True,
+                            "location": "Partner Own Point",
+                        }
+                    }
+                }
+            ),
+            specialization="",
+        )
+
+    api_app.dependency_overrides[get_current_user] = _partner_user
+
+    deny_response = await async_client.patch(
+        "/api/v1/catalog/prices/matrix/cell",
+        json={"service_id": service.id, "point": "Partner Other Point", "enabled": True, "price": 1000},
+    )
+    assert deny_response.status_code == 403
+    assert deny_response.json()["detail"] == "point_access_denied"
+
+    allow_response = await async_client.patch(
+        "/api/v1/catalog/prices/matrix/cell",
+        json={"service_id": service.id, "point": "Partner Own Point", "enabled": True, "price": 1111},
+    )
+    assert allow_response.status_code == 200
+    assert allow_response.json()["enabled"] is True
+
+
 async def test_orders_create_then_get_uses_fixed_price_flow(async_client, db_session):
     service = Service(
         slug="screen-repair-api",

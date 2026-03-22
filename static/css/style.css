@@ -119,6 +119,39 @@
     color: #334155 !important;
 }
 
+.point-prices-table-wrap {
+    max-height: 68vh;
+    overflow: auto;
+}
+
+.point-prices-table-wrap thead th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: #f8fafc;
+}
+
+#point-prices-table td,
+#point-prices-table th {
+    padding: 0.45rem 0.5rem;
+}
+
+.matrix-cell {
+    transition: background-color 0.2s ease;
+}
+
+.matrix-cell-updating {
+    background: #fef3c7;
+}
+
+.matrix-cell-saved {
+    background: #dcfce7;
+}
+
+.matrix-cell-error {
+    background: #fee2e2;
+}
+
 .calc-actions-fixed {
     position: sticky;
     bottom: 0;

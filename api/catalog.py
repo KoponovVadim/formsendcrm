@@ -1,7 +1,7 @@
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import can_manage_services, get_current_user, get_services_access_scope
@@ -180,6 +180,148 @@ async def list_points(db: AsyncSession = Depends(get_db), user=Depends(get_curre
 
     locations = list((await db.execute(select(Location).order_by(Location.name.asc()))).scalars().all())
     return [str(location.name or "") for location in locations if str(location.name or "").strip()]
+
+
+def _can_edit_point_prices(user) -> bool:
+    scope = get_services_access_scope(user)
+    return bool(user.is_superuser or can_manage_services(user) or scope.get("partner_mode"))
+
+
+def _is_point_allowed_for_user(user, point_name: str) -> bool:
+    if user.is_superuser or can_manage_services(user):
+        return True
+    scope = get_services_access_scope(user)
+    allowed_points = [str(v or "").strip() for v in (scope.get("allowed_points") or []) if str(v or "").strip()]
+    if not allowed_points:
+        return False
+    return str(point_name or "").strip() in allowed_points
+
+
+@router.get("/prices/matrix")
+async def get_prices_matrix(
+    category: str = "all",
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    if not _can_edit_point_prices(user):
+        raise HTTPException(403, "services_manage_access_denied")
+
+    scope = get_services_access_scope(user)
+    hide_own_price = bool(scope.get("hide_own_price"))
+
+    point_stmt = select(Location).where(Location.is_active == True).order_by(Location.name.asc())
+    allowed_points = [str(v or "").strip() for v in (scope.get("allowed_points") or []) if str(v or "").strip()]
+    if not (user.is_superuser or can_manage_services(user)) and allowed_points:
+        point_stmt = point_stmt.where(Location.name.in_(allowed_points))
+    points = list((await db.execute(point_stmt)).scalars().all())
+    point_names = [str(point.name or "").strip() for point in points if str(point.name or "").strip()]
+    point_id_to_name = {int(point.id): str(point.name or "").strip() for point in points}
+
+    service_stmt = select(Service).where(Service.is_active == True)
+    normalized_category = str(category or "all").strip().lower()
+    services = list((await db.execute(service_stmt.order_by(Service.category.asc(), Service.name.asc()))).scalars().all())
+    if normalized_category and normalized_category != "all":
+        services = [
+            service
+            for service in services
+            if str(service.category or "").strip().lower() == normalized_category
+        ]
+
+    service_ids = [int(service.id) for service in services]
+    location_prices = []
+    if service_ids and point_id_to_name:
+        location_prices = list(
+            (
+                await db.execute(
+                    select(LocationPrice).where(
+                        LocationPrice.service_id.in_(service_ids),
+                        LocationPrice.location_id.in_(list(point_id_to_name.keys())),
+                    )
+                )
+            ).scalars().all()
+        )
+
+    price_map = {}
+    for row in location_prices:
+        service_id = int(row.service_id)
+        point_name = point_id_to_name.get(int(row.location_id))
+        if not point_name:
+            continue
+        price_map.setdefault(service_id, {})[point_name] = float(row.price or 0)
+
+    return {
+        "category": normalized_category,
+        "points": point_names,
+        "can_edit_own_price": bool(user.is_superuser),
+        "show_own_price": not hide_own_price,
+        "services": [
+            {
+                "service_id": int(service.id),
+                "name": str(service.name or ""),
+                "slug": str(service.slug or ""),
+                "category": str(service.category or ""),
+                "own_price": float(service.base_price or 0),
+                "point_prices": price_map.get(int(service.id), {}),
+            }
+            for service in services
+        ],
+    }
+
+
+@router.patch("/prices/matrix/cell")
+async def update_prices_matrix_cell(payload: dict, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    if not _can_edit_point_prices(user):
+        raise HTTPException(403, "services_manage_access_denied")
+
+    service_id = int(payload.get("service_id", 0) or 0)
+    point_name = _normalize_point_name(payload.get("point", ""))
+    if service_id <= 0 or not point_name:
+        raise HTTPException(400, "service_and_point_required")
+
+    if not _is_point_allowed_for_user(user, point_name):
+        raise HTTPException(403, "point_access_denied")
+
+    service = (await db.execute(select(Service).where(Service.id == service_id))).scalar_one_or_none()
+    if not service:
+        raise HTTPException(404, "service_not_found")
+
+    location = (await db.execute(select(Location).where(Location.name == point_name))).scalar_one_or_none()
+    if not location:
+        raise HTTPException(404, "point_not_found")
+
+    row = (
+        await db.execute(
+            select(LocationPrice)
+            .where(LocationPrice.location_id == int(location.id), LocationPrice.service_id == int(service.id))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    enabled = payload.get("enabled")
+    if enabled is not None:
+        enabled = bool(enabled)
+
+    has_price = "price" in payload
+    parsed_price = as_float(payload.get("price", 0), 0)
+
+    if enabled is False:
+        if row is not None:
+            await db.delete(row)
+            await db.commit()
+        return {"ok": True, "enabled": False, "price": None}
+
+    if row is None:
+        initial_price = parsed_price if has_price else 0.0
+        row = LocationPrice(location_id=int(location.id), service_id=int(service.id), price=initial_price)
+        db.add(row)
+        await db.commit()
+        return {"ok": True, "enabled": True, "price": float(initial_price)}
+
+    if has_price:
+        row.price = parsed_price
+        await db.commit()
+
+    return {"ok": True, "enabled": True, "price": float(row.price or 0)}
 
 
 @router.post("/points")
@@ -363,12 +505,15 @@ async def create_service(payload: dict, db: AsyncSession = Depends(get_db), user
 
     normalized_name = _normalize_service_name(payload.get("name", ""))
     normalized_slug = _slugify_service(payload.get("slug", "") or normalized_name)
+    base_price_value = payload.get("base_price", 0)
+    if not user.is_superuser:
+        base_price_value = 0
 
     service = Service(
         slug=normalized_slug,
         name=normalized_name,
         category=str(payload.get("category", "repair")),
-        base_price=payload.get("base_price", 0),
+        base_price=base_price_value,
         calculator_schema=payload.get("calculator_schema") or {},
         is_active=bool(payload.get("is_active", True)),
     )
@@ -407,6 +552,8 @@ async def update_service(service_id: int, payload: dict, db: AsyncSession = Depe
     if "category" in payload:
         service.category = str(payload.get("category", service.category)).strip()
     if "base_price" in payload:
+        if not user.is_superuser:
+            raise HTTPException(403, "own_price_edit_forbidden")
         service.base_price = payload.get("base_price", service.base_price)
     if "calculator_schema" in payload:
         service.calculator_schema = payload.get("calculator_schema") or {}
