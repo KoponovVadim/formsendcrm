@@ -65,7 +65,12 @@
                 <tbody>
                 {% for location in locations %}
                     <tr>
-                        <td>{{ location.name }}</td>
+                        <td>
+                            <form method="post" action="/admin/locations/{{ location.id }}/update" class="d-flex gap-2">
+                                <input type="text" name="name" class="form-control form-control-sm" value="{{ location.name }}" required>
+                                <button type="submit" class="btn btn-sm btn-outline-primary">Сохранить</button>
+                            </form>
+                        </td>
                         <td>
                             {% if location.is_active %}
                             <span class="badge bg-success">Активна</span>
@@ -79,6 +84,9 @@
                                 <button type="submit" class="btn btn-sm btn-outline-secondary">
                                     {% if location.is_active %}Отключить{% else %}Включить{% endif %}
                                 </button>
+                            </form>
+                            <form method="post" action="/admin/locations/{{ location.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить точку {{ location.name }}?')">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
                             </form>
                         </td>
                     </tr>
@@ -118,14 +126,16 @@
                         </td>
                         <td>{{ executor.current_active_tasks }}/{{ executor.max_active_tasks }}</td>
                         <td>
-                            <form method="post" action="/admin/executors/{{ executor.id }}/location" class="d-flex gap-2">
+                            <form method="post" action="/admin/executors/{{ executor.id }}/update" class="d-flex gap-2">
                                 <input type="hidden" name="return_to" value="/admin/locations">
+                                <input type="text" name="name" class="form-control form-control-sm" value="{{ executor.name }}" required>
                                 <select name="location_id" class="form-select form-select-sm">
                                     <option value="">Без точки</option>
                                     {% for location in locations %}
                                     <option value="{{ location.id }}" {% if executor.location_id == location.id %}selected{% endif %}>{{ location.name }}</option>
                                     {% endfor %}
                                 </select>
+                                <input type="number" name="max_active_tasks" class="form-control form-control-sm" min="1" max="100" value="{{ executor.max_active_tasks }}" style="max-width: 96px;">
                                 <button type="submit" class="btn btn-sm btn-outline-primary">Сохранить</button>
                             </form>
                         </td>
@@ -135,6 +145,10 @@
                                 <button type="submit" class="btn btn-sm btn-outline-secondary">
                                     {% if executor.is_active %}Отключить{% else %}Включить{% endif %}
                                 </button>
+                            </form>
+                            <form method="post" action="/admin/executors/{{ executor.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить мастера {{ executor.name }}?')">
+                                <input type="hidden" name="return_to" value="/admin/locations">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
                             </form>
                         </td>
                     </tr>

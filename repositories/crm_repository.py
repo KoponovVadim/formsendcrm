@@ -208,6 +208,16 @@ class CRMRepository:
         stmt = select(Task).where(Task.executor_id == executor_id, Task.status.in_(["open", "assigned", "in_progress"]))
         return len((await self.db.execute(stmt)).scalars().all())
 
+    async def get_live_executor_load_map(self, location_id: int | None = None) -> dict[str, int]:
+        return await self._get_live_executor_load_by_name(location_id=location_id)
+
+    async def apply_live_load(self, executors: list[Executor], location_id: int | None = None) -> list[Executor]:
+        live_load = await self.get_live_executor_load_map(location_id=location_id)
+        for executor in executors:
+            executor.current_active_tasks = int(live_load.get(str(executor.name or "").strip().lower(), 0))
+        executors.sort(key=lambda ex: (int(ex.current_active_tasks or 0), str(ex.name or "").lower()))
+        return executors
+
     async def _get_live_executor_load_by_location(self, location_ids: list[int]) -> dict[int, int]:
         if not location_ids:
             return {}

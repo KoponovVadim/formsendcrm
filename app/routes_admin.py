@@ -20,7 +20,8 @@ from app.auth import (
 )
 from app.schema_loader import get_all_modules
 from app import sync_service
-from models.crm import Executor, Location, LocationPrice, Service
+from models.crm import Executor, Location, LocationPrice, Order, Service, Task
+from repositories.crm_repository import CRMRepository
 
 router = APIRouter(prefix="/admin")
 templates = Jinja2Templates(directory="templates")
@@ -228,7 +229,9 @@ async def admin_locations(
     modules = await get_all_modules(db)
 
     locations = (await db.execute(select(Location).order_by(Location.name.asc()))).scalars().all()
+    repo = CRMRepository(db)
     executors = (await db.execute(select(Executor).order_by(Executor.name.asc()))).scalars().all()
+    executors = await repo.apply_live_load(executors, location_id=None)
     services = (
         await db.execute(
             select(Service)
@@ -260,12 +263,12 @@ async def admin_executors(
     _require_services_manager(user)
     modules = await get_all_modules(db)
 
-    query = str(q or "").strip()
-    stmt = select(Executor).order_by(Executor.name.asc())
+    repo = CRMRepository(db)
+    query = str(q or "").strip().lower()
+    executors = (await db.execute(select(Executor).order_by(Executor.name.asc()))).scalars().all()
+    executors = await repo.apply_live_load(executors, location_id=None)
     if query:
-        stmt = stmt.where(Executor.name.ilike(f"%{query}%"))
-
-    executors = (await db.execute(stmt)).scalars().all()
+        executors = [ex for ex in executors if query in str(ex.name or "").lower()]
     locations = (await db.execute(select(Location).order_by(Location.name.asc()))).scalars().all()
 
     return templates.TemplateResponse("admin/executors.html", {
@@ -308,6 +311,67 @@ async def admin_location_toggle(
     if location:
         location.is_active = not bool(location.is_active)
         await db.commit()
+    return RedirectResponse("/admin/locations", status_code=302)
+
+
+@router.post("/locations/{location_id}/update")
+async def admin_location_update(
+    location_id: int,
+    name: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_services_manager(user)
+    location = (await db.execute(select(Location).where(Location.id == location_id))).scalar_one_or_none()
+    if not location:
+        raise HTTPException(status_code=404, detail="location_not_found")
+
+    normalized_name = str(name or "").strip()
+    if not normalized_name:
+        return RedirectResponse("/admin/locations?error=location_name_required", status_code=302)
+
+    duplicate = (
+        await db.execute(select(Location).where(Location.name == normalized_name, Location.id != int(location.id)))
+    ).scalar_one_or_none()
+    if duplicate:
+        return RedirectResponse("/admin/locations?error=location_name_exists", status_code=302)
+
+    location.name = normalized_name
+    await db.commit()
+    return RedirectResponse("/admin/locations", status_code=302)
+
+
+@router.post("/locations/{location_id}/delete")
+async def admin_location_delete(
+    location_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_services_manager(user)
+    location = (await db.execute(select(Location).where(Location.id == location_id))).scalar_one_or_none()
+    if not location:
+        raise HTTPException(status_code=404, detail="location_not_found")
+
+    orders_count = (
+        await db.execute(select(func.count()).select_from(Order).where(Order.location_id == int(location.id)))
+    ).scalar() or 0
+    if int(orders_count) > 0:
+        return RedirectResponse("/admin/locations?error=location_has_orders", status_code=302)
+
+    executors = (
+        await db.execute(select(Executor).where(Executor.location_id == int(location.id)))
+    ).scalars().all()
+    for executor in executors:
+        executor.location_id = None
+
+    prices = (
+        await db.execute(select(LocationPrice).where(LocationPrice.location_id == int(location.id)))
+    ).scalars().all()
+    for price in prices:
+        await db.delete(price)
+
+    await db.delete(location)
+    await db.commit()
     return RedirectResponse("/admin/locations", status_code=302)
 
 
@@ -390,6 +454,77 @@ async def admin_executor_set_location(
         executor.location_id = int(target.id)
         await db.commit()
 
+    return RedirectResponse(redirect_to, status_code=302)
+
+
+@router.post("/executors/{executor_id}/update")
+async def admin_executor_update(
+    executor_id: int,
+    name: str = Form(""),
+    max_active_tasks: int = Form(10),
+    location_id: str = Form(""),
+    return_to: str = Form("/admin/locations"),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_services_manager(user)
+    redirect_to = _safe_admin_redirect_path(return_to)
+    executor = (await db.execute(select(Executor).where(Executor.id == executor_id))).scalar_one_or_none()
+    if not executor:
+        raise HTTPException(status_code=404, detail="executor_not_found")
+
+    normalized_name = str(name or "").strip()
+    if not normalized_name:
+        return RedirectResponse(f"{redirect_to}?error=executor_name_required", status_code=302)
+
+    executor.name = normalized_name
+    executor.max_active_tasks = max(1, min(int(max_active_tasks or 10), 100))
+
+    location_value = str(location_id or "").strip()
+    if not location_value:
+        executor.location_id = None
+    else:
+        target = (await db.execute(select(Location).where(Location.id == int(location_value)))).scalar_one_or_none()
+        executor.location_id = int(target.id) if target else None
+
+    await db.commit()
+    return RedirectResponse(redirect_to, status_code=302)
+
+
+@router.post("/executors/{executor_id}/delete")
+async def admin_executor_delete(
+    executor_id: int,
+    return_to: str = Form("/admin/locations"),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_services_manager(user)
+    redirect_to = _safe_admin_redirect_path(return_to)
+    executor = (await db.execute(select(Executor).where(Executor.id == executor_id))).scalar_one_or_none()
+    if not executor:
+        raise HTTPException(status_code=404, detail="executor_not_found")
+
+    open_tasks_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(Task)
+            .where(
+                Task.executor_id == int(executor.id),
+                Task.status.in_(["open", "assigned", "in_progress"]),
+            )
+        )
+    ).scalar() or 0
+    if int(open_tasks_count) > 0:
+        return RedirectResponse(f"{redirect_to}?error=executor_has_open_tasks", status_code=302)
+
+    tasks = (
+        await db.execute(select(Task).where(Task.executor_id == int(executor.id)))
+    ).scalars().all()
+    for task in tasks:
+        task.executor_id = None
+
+    await db.delete(executor)
+    await db.commit()
     return RedirectResponse(redirect_to, status_code=302)
 
 

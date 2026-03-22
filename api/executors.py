@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.database import get_db
 from models.crm import Executor, Task
+from repositories.crm_repository import CRMRepository
 from services.push_service import push_service
 
 router = APIRouter(prefix="/api/v1/executors", tags=["executors"])
@@ -12,7 +13,9 @@ router = APIRouter(prefix="/api/v1/executors", tags=["executors"])
 
 @router.get("")
 async def list_executors(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
-    executors = (await db.execute(select(Executor).order_by(Executor.current_active_tasks.asc()))).scalars().all()
+    repo = CRMRepository(db)
+    executors = (await db.execute(select(Executor).order_by(Executor.name.asc()))).scalars().all()
+    executors = await repo.apply_live_load(list(executors), location_id=None)
     return [
         {
             "id": ex.id,

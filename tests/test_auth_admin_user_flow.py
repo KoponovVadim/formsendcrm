@@ -8,11 +8,11 @@ from sqlalchemy import select
 
 from app.auth import get_current_user, get_current_user_optional
 from app.database import get_db
-from app.models import ModuleConfig, Role, User
+from app.models import DynamicRecord, ModuleConfig, Role, User
 from app.routes_admin import router as admin_router
 from app.routes_auth import router as auth_router
 from app.routes_modules import router as modules_router
-from models.crm import Location
+from models.crm import Executor, Location, Task
 
 
 @pytest.mark.asyncio
@@ -118,3 +118,144 @@ async def test_module_page_has_pull_and_push_sync_buttons_for_superuser(db_sessi
     html = response.text
     assert '/admin/sync/pull/orders' in html
     assert '/admin/sync/push/orders' in html
+
+
+@pytest.mark.asyncio
+async def test_admin_executors_page_uses_live_orders_panel_load(db_session: Any):
+    app = FastAPI()
+    app.include_router(admin_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    location = Location(name="Live Point", is_active=True)
+    db_session.add(location)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            Executor(name="Master Live", is_active=True, location_id=location.id, current_active_tasks=3, max_active_tasks=10),
+            Executor(name="Master Idle", is_active=True, location_id=location.id, current_active_tasks=2, max_active_tasks=10),
+        ]
+    )
+    db_session.add(
+        ModuleConfig(
+            slug="orders",
+            sheet_name="Заказы",
+            display_name="Заказы",
+            icon="bi-clipboard-check",
+            enabled=True,
+            fields_schema=[
+                {"name": "№ заказа", "type": "TEXT"},
+                {"name": "Мастер", "type": "TEXT"},
+                {"name": "Статус", "type": "TEXT"},
+            ],
+            sort_order=0,
+        )
+    )
+    db_session.add_all(
+        [
+            DynamicRecord(module_slug="orders", row_index=2, data={"№ заказа": "ORD-1", "Мастер": "Master Live", "Статус": "В работе"}),
+            DynamicRecord(module_slug="orders", row_index=3, data={"№ заказа": "ORD-2", "Мастер": "Master Live", "Статус": "Выдан"}),
+        ]
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get("/admin/executors")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Master Live" in html
+    assert "Master Live" in html and "1/10" in html
+
+
+@pytest.mark.asyncio
+async def test_admin_can_update_and_delete_location_and_executor(db_session: Any):
+    app = FastAPI()
+    app.include_router(admin_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    location = Location(name="To Rename", is_active=True)
+    db_session.add(location)
+    await db_session.flush()
+
+    executor = Executor(name="To Edit", is_active=True, location_id=location.id, current_active_tasks=0, max_active_tasks=10)
+    db_session.add(executor)
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client:
+        update_location = await client.post(f"/admin/locations/{location.id}/update", data={"name": "Renamed Point"})
+        assert update_location.status_code == 302
+
+        update_executor = await client.post(
+            f"/admin/executors/{executor.id}/update",
+            data={"name": "Edited Master", "max_active_tasks": "12", "location_id": "", "return_to": "/admin/executors"},
+        )
+        assert update_executor.status_code == 302
+
+        delete_executor = await client.post(
+            f"/admin/executors/{executor.id}/delete",
+            data={"return_to": "/admin/executors"},
+        )
+        assert delete_executor.status_code == 302
+
+        delete_location = await client.post(f"/admin/locations/{location.id}/delete")
+        assert delete_location.status_code == 302
+
+    updated_location = (await db_session.execute(select(Location).where(Location.name == "Renamed Point"))).scalar_one_or_none()
+    assert updated_location is None
+
+    edited_executor = (await db_session.execute(select(Executor).where(Executor.name == "Edited Master"))).scalar_one_or_none()
+    assert edited_executor is None
+
+
+@pytest.mark.asyncio
+async def test_admin_executor_delete_blocked_with_open_tasks(db_session: Any):
+    app = FastAPI()
+    app.include_router(admin_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    location = Location(name="Guard Point", is_active=True)
+    db_session.add(location)
+    await db_session.flush()
+
+    executor = Executor(name="Busy Master", is_active=True, location_id=location.id, current_active_tasks=0, max_active_tasks=10)
+    db_session.add(executor)
+    await db_session.flush()
+
+    db_session.add(Task(order_id=1, title="Guard task", status="assigned", executor_id=executor.id, priority=1, assignment_score=1))
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client:
+        response = await client.post(
+            f"/admin/executors/{executor.id}/delete",
+            data={"return_to": "/admin/executors"},
+        )
+
+    assert response.status_code == 302
+    assert "error=executor_has_open_tasks" in str(response.headers.get("location") or "")
+
+    exists = (await db_session.execute(select(Executor).where(Executor.id == executor.id))).scalar_one_or_none()
+    assert exists is not None
