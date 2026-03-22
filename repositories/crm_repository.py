@@ -2,6 +2,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models import DynamicRecord, ModuleConfig
 from models.crm import Client, Executor, Location, LocationPrice, Order, OrderItem, Service, Task
 
 
@@ -84,12 +85,13 @@ class CRMRepository:
         ).all()
         count_map = {int(location_id): int(total) for location_id, total in counts}
 
+        live_executor_load_by_location = await self._get_live_executor_load_by_location(location_ids)
+
         exec_rows = (
             await self.db.execute(
                 select(
                     Executor.location_id,
                     func.count(Executor.id),
-                    func.coalesce(func.sum(Executor.current_active_tasks), 0),
                     func.coalesce(func.sum(Executor.max_active_tasks), 0),
                 )
                 .where(Executor.is_active == True, Executor.location_id.in_(location_ids))
@@ -99,10 +101,10 @@ class CRMRepository:
         load_map = {
             int(location_id): {
                 "masters_count": int(masters_count or 0),
-                "active_tasks": int(active_tasks or 0),
+                "active_tasks": int(live_executor_load_by_location.get(int(location_id), 0)),
                 "capacity": int(capacity or 0),
             }
-            for location_id, masters_count, active_tasks, capacity in exec_rows
+            for location_id, masters_count, capacity in exec_rows
         }
 
         all_partner_prices = [
@@ -145,10 +147,15 @@ class CRMRepository:
         stmt = (
             select(Executor)
             .where(Executor.is_active == True, Executor.location_id == location_id)
-            .order_by(Executor.current_active_tasks.asc(), Executor.name.asc())
+            .order_by(Executor.name.asc())
         )
 
         executors = list((await self.db.execute(stmt)).scalars().all())
+        live_load = await self._get_live_executor_load_by_name(location_id=location_id)
+        for executor in executors:
+            executor.current_active_tasks = int(live_load.get(str(executor.name or "").strip().lower(), 0))
+
+        executors.sort(key=lambda ex: (int(ex.current_active_tasks or 0), str(ex.name or "").lower()))
         return executors
 
     async def get_location_price(self, location_id: int, service_id: int) -> float | None:
@@ -190,8 +197,111 @@ class CRMRepository:
         stmt = select(Executor).where(Executor.is_active == True)
         if location_id is not None and int(location_id or 0) > 0:
             stmt = stmt.where(Executor.location_id == int(location_id))
-        return list((await self.db.execute(stmt)).scalars().all())
+        executors = list((await self.db.execute(stmt)).scalars().all())
+        live_load = await self._get_live_executor_load_by_name(location_id=(int(location_id) if location_id is not None else None))
+        for executor in executors:
+            executor.current_active_tasks = int(live_load.get(str(executor.name or "").strip().lower(), 0))
+        executors.sort(key=lambda ex: (int(ex.current_active_tasks or 0), str(ex.name or "").lower()))
+        return executors
 
     async def open_tasks_count(self, executor_id: int) -> int:
         stmt = select(Task).where(Task.executor_id == executor_id, Task.status.in_(["open", "assigned", "in_progress"]))
         return len((await self.db.execute(stmt)).scalars().all())
+
+    async def _get_live_executor_load_by_location(self, location_ids: list[int]) -> dict[int, int]:
+        if not location_ids:
+            return {}
+
+        executors = (
+            await self.db.execute(
+                select(Executor).where(Executor.is_active == True, Executor.location_id.in_(location_ids))
+            )
+        ).scalars().all()
+
+        live_by_name = await self._get_live_executor_load_by_name(location_id=None)
+
+        by_location: dict[int, int] = {}
+        for executor in executors:
+            location_id = int(executor.location_id or 0)
+            if location_id <= 0:
+                continue
+            master_name_key = str(executor.name or "").strip().lower()
+            by_location[location_id] = by_location.get(location_id, 0) + int(live_by_name.get(master_name_key, 0))
+
+        return by_location
+
+    async def _get_live_executor_load_by_name(self, location_id: int | None) -> dict[str, int]:
+        orders_module = (
+            await self.db.execute(select(ModuleConfig).where(ModuleConfig.slug == "orders"))
+        ).scalar_one_or_none()
+        if not orders_module:
+            return {}
+
+        fields_schema = orders_module.fields_schema or []
+        field_names = [str(field.get("name", "")).strip() for field in fields_schema if isinstance(field, dict)]
+
+        master_field = self._find_field_name(field_names, ["Мастер", "партнер", "партнёр"])
+        status_field = self._find_field_name(field_names, ["Статус"])
+        if not master_field:
+            return {}
+
+        records = (
+            await self.db.execute(select(DynamicRecord).where(DynamicRecord.module_slug == "orders"))
+        ).scalars().all()
+
+        if location_id is not None and int(location_id or 0) > 0:
+            available_names = {
+                str(executor.name or "").strip().lower()
+                for executor in (
+                    await self.db.execute(
+                        select(Executor).where(Executor.is_active == True, Executor.location_id == int(location_id))
+                    )
+                ).scalars().all()
+            }
+        else:
+            available_names = None
+
+        active_statuses = {
+            "новый",
+            "new",
+            "open",
+            "assigned",
+            "in_progress",
+            "в работе",
+            "ожидание",
+            "готов",
+        }
+
+        load_by_name: dict[str, int] = {}
+        for record in records:
+            data = record.data or {}
+            master_name = str(data.get(master_field, "")).strip().lower()
+            if not master_name:
+                continue
+            if available_names is not None and master_name not in available_names:
+                continue
+
+            if status_field:
+                status = str(data.get(status_field, "")).strip().lower()
+                if status and status not in active_statuses:
+                    continue
+
+            load_by_name[master_name] = int(load_by_name.get(master_name, 0)) + 1
+
+        return load_by_name
+
+    @staticmethod
+    def _find_field_name(field_names: list[str], candidates: list[str]) -> str | None:
+        lowered = {str(name).lower(): name for name in field_names if str(name).strip()}
+        for candidate in candidates:
+            key = str(candidate or "").strip().lower()
+            if key in lowered:
+                return lowered[key]
+
+        for candidate in candidates:
+            key = str(candidate or "").strip().lower()
+            for field_name in field_names:
+                if key in str(field_name).lower():
+                    return field_name
+
+        return None

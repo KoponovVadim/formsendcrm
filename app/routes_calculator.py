@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import can_manage_services, filter_visible_modules_for_user, get_current_user, get_services_access_scope
 from app.database import get_db
 from app.schema_loader import get_all_modules
-from models.crm import Client, Executor, Location, LocationPrice, Order, Service
+from models.crm import Client, Location, LocationPrice, Order, Service
 from repositories.crm_repository import CRMRepository
 
 router = APIRouter()
@@ -147,6 +147,7 @@ async def point_detail_page(
         raise HTTPException(status_code=403, detail="point_access_denied")
 
     scope = get_services_access_scope(user)
+    repo = CRMRepository(db)
 
     orders = (
         await db.execute(
@@ -158,13 +159,7 @@ async def point_detail_page(
         )
     ).all()
 
-    executors = (
-        await db.execute(
-            select(Executor)
-            .where(Executor.location_id == int(location.id))
-            .order_by(Executor.is_active.desc(), Executor.current_active_tasks.asc(), Executor.name.asc())
-        )
-    ).scalars().all()
+    executors = await repo.list_executors_for_location_and_category(int(location.id), "")
 
     prices = (
         await db.execute(

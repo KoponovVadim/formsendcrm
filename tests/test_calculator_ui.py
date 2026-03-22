@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from app.models import DynamicRecord, ModuleConfig
 from api.orders import router as orders_router
 from app.auth import get_current_user
 from app.database import get_db
@@ -239,3 +240,57 @@ async def test_calculator_services_partial_has_no_quick_search(db_session: Any):
     html = response.text
     assert 'id="calc-service-search"' not in html
     assert 'id="calc-service-select"' in html
+
+
+@pytest.mark.asyncio
+async def test_calculator_executors_uses_orders_panel_load_not_stale_counter(db_session: Any):
+    app = FastAPI()
+    app.include_router(calculator_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=14, is_superuser=True, role=SimpleNamespace(permissions={}), specialization="")
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    point = Location(name="Load Point", is_active=True)
+    executor = Executor(name="Load Master", is_active=True, location_id=None, current_active_tasks=99, max_active_tasks=10)
+    db_session.add(point)
+    await db_session.flush()
+    executor.location_id = point.id
+    db_session.add(executor)
+
+    db_session.add(
+        ModuleConfig(
+            slug="orders",
+            sheet_name="Заказы",
+            display_name="Заказы",
+            icon="bi-clipboard-check",
+            enabled=True,
+            fields_schema=[
+                {"name": "№ заказа", "type": "TEXT"},
+                {"name": "Мастер", "type": "TEXT"},
+                {"name": "Статус", "type": "TEXT"},
+            ],
+            sort_order=0,
+        )
+    )
+    db_session.add(
+        DynamicRecord(
+            module_slug="orders",
+            row_index=2,
+            data={"№ заказа": "ORD-LIVE-1", "Мастер": "Load Master", "Статус": "В работе"},
+        )
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get(f"/calculator/executors?location_id={point.id}")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Load Master (1/10)" in html
+    assert "Load Master (99/10)" not in html
