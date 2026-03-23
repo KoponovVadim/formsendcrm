@@ -33,6 +33,14 @@
             <div class="row g-3">
                 <div class="col-12 col-md-6">
                     <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" name="perm_v2_services_manage" id="perm_v2_services_manage"
+                               {% if role.permissions and role.permissions.get('v2', {}).get('services', {}).get('manage', false) %}checked{% endif %}>
+                        <label class="form-check-label" for="perm_v2_services_manage">Управление услугами и точками</label>
+                    </div>
+                    <small class="text-muted">Доступ к разделам услуг, точек и мастеров в админке.</small>
+                </div>
+                <div class="col-12 col-md-6">
+                    <div class="form-check form-switch">
                         <input class="form-check-input" type="checkbox" name="perm_logistics_manage" id="perm_logistics_manage"
                                {% if role.permissions and role.permissions.get('logistics', {}).get('manage', false) %}checked{% endif %}>
                         <label class="form-check-label" for="perm_logistics_manage">Управление логистикой</label>

@@ -182,6 +182,96 @@ def _safe_admin_redirect_path(value: str, default: str = "/admin/locations") -> 
     return default
 
 
+def _build_reception_role_permissions(all_modules: list[ModuleConfig]) -> dict:
+    permissions: dict = {}
+
+    order_edit_keywords = (
+        "статус",
+        "клиент",
+        "телефон",
+        "устройство",
+        "неисправ",
+        "мастер",
+        "дедлайн",
+        "выдач",
+        "прием",
+        "примеч",
+        "comment",
+        "status",
+        "client",
+        "phone",
+        "device",
+    )
+
+    client_edit_keywords = (
+        "фио",
+        "название",
+        "телефон",
+        "примеч",
+        "name",
+        "phone",
+        "note",
+    )
+
+    for mod in all_modules:
+        fields = [f.get("name", "") for f in (mod.fields_schema or []) if isinstance(f, dict)]
+        slug = str(mod.slug or "")
+
+        if slug == "orders":
+            editable = [
+                field_name
+                for field_name in fields
+                if any(keyword in str(field_name).lower() for keyword in order_edit_keywords)
+            ]
+            if not editable:
+                editable = list(fields)
+
+            permissions[slug] = {
+                "visible": True,
+                "fields_visible": list(fields),
+                "fields_editable": editable,
+            }
+            continue
+
+        if slug == "clients":
+            editable = [
+                field_name
+                for field_name in fields
+                if any(keyword in str(field_name).lower() for keyword in client_edit_keywords)
+            ]
+            permissions[slug] = {
+                "visible": True,
+                "fields_visible": list(fields),
+                "fields_editable": editable,
+            }
+            continue
+
+        if slug == "warranty":
+            editable = [
+                field_name
+                for field_name in fields
+                if "статус" in str(field_name).lower() or "status" in str(field_name).lower()
+            ]
+            permissions[slug] = {
+                "visible": True,
+                "fields_visible": list(fields),
+                "fields_editable": editable,
+            }
+            continue
+
+        permissions[slug] = {
+            "visible": False,
+            "fields_visible": [],
+            "fields_editable": [],
+        }
+
+    permissions["courier"] = {"cabinet": False}
+    permissions["logistics"] = {"manage": True}
+    permissions["v2"] = {"services": {"manage": False}}
+
+    return permissions
+
+
 @router.get("/", response_class=HTMLResponse)
 async def admin_dashboard(
     request: Request,
@@ -621,6 +711,33 @@ async def role_create(
     return RedirectResponse("/admin/roles", status_code=302)
 
 
+@router.post("/roles/create-reception", response_class=HTMLResponse)
+async def role_create_reception(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_admin(user)
+
+    role_name = "Пункт приема заказов"
+    existing = (await db.execute(select(Role).where(Role.name == role_name))).scalar_one_or_none()
+    if existing:
+        return RedirectResponse("/admin/roles?exists=reception", status_code=302)
+
+    all_modules_result = (await db.execute(select(ModuleConfig).order_by(ModuleConfig.sort_order))).scalars().all()
+    permissions = _build_reception_role_permissions(all_modules_result)
+
+    db.add(
+        Role(
+            name=role_name,
+            description="Приемка, выдача и отправка заказов",
+            permissions=permissions,
+        )
+    )
+    await db.commit()
+
+    return RedirectResponse("/admin/roles?created=reception", status_code=302)
+
+
 @router.get("/roles/{role_id}", response_class=HTMLResponse)
 async def role_edit_page(
     request: Request,
@@ -680,6 +797,11 @@ async def role_update(
     }
     permissions["logistics"] = {
         "manage": form.get("perm_logistics_manage") == "on",
+    }
+    permissions["v2"] = {
+        "services": {
+            "manage": form.get("perm_v2_services_manage") == "on",
+        }
     }
 
     role.permissions = permissions

@@ -3,6 +3,11 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h4 class="fw-bold mb-0"><i class="bi bi-shield-lock me-2"></i>Роли</h4>
+    <form method="POST" action="/admin/roles/create-reception" class="m-0">
+        <button type="submit" class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-plus-circle me-1"></i>Добавить роль: Пункт приема заказов
+        </button>
+    </form>
 </div>
 
 <!-- Create role -->
