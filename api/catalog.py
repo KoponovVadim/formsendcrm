@@ -234,7 +234,7 @@ async def get_prices_matrix(
 
     service_stmt = select(Service).where(Service.is_active == True)
     normalized_category = str(category or "all").strip().lower()
-    services = list((await db.execute(service_stmt.order_by(Service.category.asc(), Service.name.asc()))).scalars().all())
+    services = list((await db.execute(service_stmt.order_by(Service.category.asc(), Service.slug.asc()))).scalars().all())
     if normalized_category and normalized_category != "all":
         services = [
             service
@@ -417,7 +417,7 @@ async def get_point_prices(point_name: str, db: AsyncSession = Depends(get_db), 
     if not location:
         raise HTTPException(404, "point_not_found")
 
-    services = list((await db.execute(select(Service).order_by(Service.name.asc()))).scalars().all())
+    services = list((await db.execute(select(Service).order_by(Service.slug.asc()))).scalars().all())
     all_locations = list((await db.execute(select(Location))).scalars().all())
     location_by_id = {int(loc.id): loc for loc in all_locations}
 

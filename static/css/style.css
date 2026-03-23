@@ -131,6 +131,26 @@
     background: #f8fafc;
 }
 
+#point-prices-table th:first-child,
+#point-prices-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 4;
+    background: #ffffff;
+}
+
+#point-prices-table th:nth-child(2),
+#point-prices-table td:nth-child(2) {
+    position: sticky;
+    left: 260px;
+    z-index: 4;
+    background: #ffffff;
+}
+
+.matrix-apply-base {
+    white-space: nowrap;
+}
+
 #point-prices-table td,
 #point-prices-table th {
     padding: 0.45rem 0.5rem;

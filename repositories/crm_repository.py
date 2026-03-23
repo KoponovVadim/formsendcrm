@@ -55,7 +55,7 @@ class CRMRepository:
             stmt = stmt.where(Service.category == category)
         if query:
             stmt = stmt.where(Service.name.ilike(f"%{query}%"))
-        stmt = stmt.order_by(Service.name.asc()).limit(100)
+        stmt = stmt.order_by(Service.slug.asc()).limit(100)
         return list((await self.db.execute(stmt)).scalars().all())
 
     async def list_locations_for_service(
@@ -176,8 +176,8 @@ class CRMRepository:
             stmt = stmt.where(Service.is_active == True)
         if query:
             like = f"%{query}%"
-            stmt = stmt.where(Service.name.ilike(like))
-        stmt = stmt.order_by(Service.name.asc()).limit(30)
+            stmt = stmt.where(Service.name.ilike(like) | Service.slug.ilike(like))
+        stmt = stmt.order_by(Service.slug.asc()).limit(200)
         return list((await self.db.execute(stmt)).scalars().all())
 
     async def get_order(self, order_id: int) -> Order | None:
