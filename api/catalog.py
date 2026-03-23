@@ -215,6 +215,7 @@ def _is_point_allowed_for_user(user, point_name: str) -> bool:
 @router.get("/prices/matrix")
 async def get_prices_matrix(
     category: str = "all",
+    include_inactive: bool = False,
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -232,7 +233,9 @@ async def get_prices_matrix(
     point_names = [str(point.name or "").strip() for point in points if str(point.name or "").strip()]
     point_id_to_name = {int(point.id): str(point.name or "").strip() for point in points}
 
-    service_stmt = select(Service).where(Service.is_active == True)
+    service_stmt = select(Service)
+    if not include_inactive:
+        service_stmt = service_stmt.where(Service.is_active == True)
     normalized_category = str(category or "all").strip().lower()
     services = list((await db.execute(service_stmt.order_by(Service.category.asc(), Service.slug.asc()))).scalars().all())
     if normalized_category and normalized_category != "all":
@@ -275,6 +278,7 @@ async def get_prices_matrix(
                 "name": str(service.name or ""),
                 "slug": str(service.slug or ""),
                 "category": str(service.category or ""),
+                "is_active": bool(service.is_active),
                 "own_price": float(service.base_price or 0),
                 "point_prices": price_map.get(int(service.id), {}),
             }
@@ -527,7 +531,7 @@ async def create_service(payload: dict, db: AsyncSession = Depends(get_db), user
     service = Service(
         slug=normalized_slug,
         name=normalized_name,
-        category=str(payload.get("category", "repair")),
+        category=str(payload.get("category", "")).strip(),
         base_price=base_price_value,
         calculator_schema=payload.get("calculator_schema") or {},
         is_active=bool(payload.get("is_active", True)),

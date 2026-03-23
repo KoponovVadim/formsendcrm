@@ -151,6 +151,19 @@
     white-space: nowrap;
 }
 
+.services-unified-table td,
+.services-unified-table th {
+    padding: 0.4rem 0.45rem;
+}
+
+.services-unified-table .service-unified-row-active td {
+    background: #eaf3ff !important;
+}
+
+.services-unified-table tbody tr:hover td {
+    background: #f7fbff;
+}
+
 #point-prices-table td,
 #point-prices-table th {
     padding: 0.45rem 0.5rem;
