@@ -84,6 +84,63 @@ async def test_admin_creates_user_with_role_and_point(db_session: Any):
 
 
 @pytest.mark.asyncio
+async def test_admin_can_create_reception_role_preset(db_session: Any):
+    app = FastAPI()
+    app.include_router(admin_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    db_session.add_all(
+        [
+            ModuleConfig(
+                slug="orders",
+                sheet_name="Заказы",
+                display_name="Заказы",
+                icon="bi-clipboard-check",
+                enabled=True,
+                fields_schema=[
+                    {"name": "№ заказа", "type": "TEXT"},
+                    {"name": "Клиент", "type": "TEXT"},
+                    {"name": "Статус", "type": "TEXT"},
+                ],
+                sort_order=0,
+            ),
+            ModuleConfig(
+                slug="clients",
+                sheet_name="Клиенты",
+                display_name="Клиенты",
+                icon="bi-people",
+                enabled=True,
+                fields_schema=[
+                    {"name": "ФИО название", "type": "TEXT"},
+                    {"name": "Телефон", "type": "TEXT"},
+                ],
+                sort_order=1,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client:
+        response = await client.post("/admin/roles/create-reception")
+
+    assert response.status_code == 302
+
+    role = (await db_session.execute(select(Role).where(Role.name == "Пункт приема заказов"))).scalar_one_or_none()
+    assert role is not None
+    assert role.permissions.get("logistics", {}).get("manage") is True
+    assert role.permissions.get("v2", {}).get("services", {}).get("manage") is False
+    assert role.permissions.get("orders", {}).get("visible") is True
+
+
+@pytest.mark.asyncio
 async def test_module_page_has_pull_and_push_sync_buttons_for_superuser(db_session: Any):
     app = FastAPI()
     app.include_router(modules_router)
