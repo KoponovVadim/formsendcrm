@@ -179,3 +179,35 @@ async def mirror_order_to_dynamic_modules(
         except Exception:
             # Never fail order flow because of backup integration.
             return
+
+
+async def remove_order_from_dynamic_modules(db: AsyncSession, *, order_no: str) -> int:
+    target_order_no = str(order_no or "").strip()
+    if not target_order_no:
+        return 0
+
+    removed = 0
+    for module_slug in ("orders", "clients", "finance"):
+        module = await _get_module_by_slug(db, module_slug)
+        if not module:
+            continue
+
+        order_no_field = _find_field_name(module, ["№ заказа", "номер", "заказ"])
+        if not order_no_field:
+            continue
+
+        records = (
+            await db.execute(
+                select(DynamicRecord)
+                .where(DynamicRecord.module_slug == module_slug)
+                .order_by(DynamicRecord.row_index.asc())
+            )
+        ).scalars().all()
+
+        for record in records:
+            value = str((record.data or {}).get(order_no_field, "")).strip()
+            if value == target_order_no:
+                await db.delete(record)
+                removed += 1
+
+    return removed

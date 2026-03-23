@@ -24,6 +24,7 @@ from app.schema_loader import get_all_modules
 from app import sync_service
 from models.crm import Executor, Location, LocationPrice, LogisticsDelivery, Order, Service, Task
 from repositories.crm_repository import CRMRepository
+from services.order_backup_service import remove_order_from_dynamic_modules
 
 router = APIRouter(prefix="/admin")
 templates = Jinja2Templates(directory="templates")
@@ -423,7 +424,10 @@ async def admin_order_delete(
     if not order:
         raise HTTPException(status_code=404, detail="order_not_found")
 
+    order_no = str(order.order_no or "").strip()
     await db.delete(order)
+    if order_no:
+        await remove_order_from_dynamic_modules(db, order_no=order_no)
     await db.commit()
     return RedirectResponse("/admin/orders", status_code=302)
 

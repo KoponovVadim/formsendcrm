@@ -291,6 +291,21 @@ async def test_admin_orders_page_and_delete_order(db_session: Any):
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_current_user] = _override_get_current_user
 
+    db_session.add(
+        ModuleConfig(
+            slug="orders",
+            sheet_name="Заказы",
+            display_name="Заказы",
+            icon="bi-clipboard-check",
+            enabled=True,
+            fields_schema=[
+                {"name": "№ заказа", "type": "TEXT"},
+                {"name": "Статус", "type": "TEXT"},
+            ],
+            sort_order=0,
+        )
+    )
+
     client = Client(name="Order Admin Client", phone="79998887766")
     point = Location(name="Order Admin Point", is_active=True)
     db_session.add_all([client, point])
@@ -305,6 +320,13 @@ async def test_admin_orders_page_and_delete_order(db_session: Any):
         currency="RUB",
     )
     db_session.add(order)
+    db_session.add(
+        DynamicRecord(
+            module_slug="orders",
+            row_index=10,
+            data={"№ заказа": "JX-ADMIN-ORDER-1", "Статус": "Новый"},
+        )
+    )
     await db_session.commit()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client_http:
@@ -319,6 +341,13 @@ async def test_admin_orders_page_and_delete_order(db_session: Any):
 
     deleted = (await db_session.execute(select(Order).where(Order.id == order.id))).scalar_one_or_none()
     assert deleted is None
+
+    dashboard_copy = (
+        await db_session.execute(
+            select(DynamicRecord).where(DynamicRecord.module_slug == "orders")
+        )
+    ).scalars().all()
+    assert dashboard_copy == []
 
 
 @pytest.mark.asyncio
