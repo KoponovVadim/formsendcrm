@@ -8,7 +8,7 @@ from sqlalchemy import select, func
 
 from app.config import settings
 from app.database import create_tables, async_session
-from app.models import User, Role, DynamicRecord
+from app.models import User, Role, DynamicRecord, ModuleConfig
 from app.auth import get_current_user, hash_password, filter_visible_modules_for_user
 from app.schema_loader import seed_modules, get_all_modules
 from app.routes_auth import router as auth_router
