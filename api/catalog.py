@@ -80,6 +80,18 @@ def _normalize_point_names(values) -> list[str]:
     return result
 
 
+def _normalize_point_prices_map(values) -> dict[str, float]:
+    if not isinstance(values, dict):
+        return {}
+    result: dict[str, float] = {}
+    for raw_name, raw_price in values.items():
+        point_name = _normalize_point_name(raw_name)
+        if not point_name:
+            continue
+        result[point_name] = as_float(raw_price, 0.0)
+    return result
+
+
 def _build_auto_partner_prices(price_rows: list[LocationPrice], locations_by_id: dict[int, Location]) -> dict[int, dict[str, float]]:
     grouped: dict[int, dict[str, float]] = {}
     for row in price_rows:
@@ -122,6 +134,7 @@ async def list_services(
     if can_manage:
         service_ids = [int(s.id) for s in services]
         enabled_points_by_service: dict[int, list[str]] = {}
+        point_prices_by_service: dict[int, dict[str, float]] = {}
 
         if service_ids:
             price_rows = list(
@@ -141,6 +154,7 @@ async def list_services(
                     continue
                 service_id = int(row.service_id)
                 enabled_points_by_service.setdefault(service_id, []).append(location_name)
+                point_prices_by_service.setdefault(service_id, {})[location_name] = float(row.price or 0)
 
             for service_id, names in enabled_points_by_service.items():
                 enabled_points_by_service[service_id] = sorted(set(names))
@@ -155,6 +169,7 @@ async def list_services(
                 "is_active": bool(s.is_active),
                 "calculator_schema": s.calculator_schema,
                 "enabled_points": enabled_points_by_service.get(int(s.id), []),
+                "point_prices": point_prices_by_service.get(int(s.id), {}),
             }
             for s in services
         ]
@@ -520,8 +535,30 @@ async def create_service(payload: dict, db: AsyncSession = Depends(get_db), user
     db.add(service)
     await db.flush()
 
+    point_prices_map = _normalize_point_prices_map(payload.get("point_prices", {}))
     enabled_point_names = _normalize_point_names(payload.get("enabled_points", []))
-    if enabled_point_names:
+
+    if point_prices_map:
+        locations = list((await db.execute(select(Location))).scalars().all())
+        location_by_name = {
+            str(location.name or "").strip().lower(): location
+            for location in locations
+            if str(location.name or "").strip()
+        }
+        enabled_point_names = []
+        for point_name, point_price in point_prices_map.items():
+            location = location_by_name.get(point_name.lower())
+            if not location:
+                continue
+            enabled_point_names.append(str(location.name or "").strip())
+            db.add(
+                LocationPrice(
+                    location_id=int(location.id),
+                    service_id=int(service.id),
+                    price=float(point_price),
+                )
+            )
+    elif enabled_point_names:
         locations = list((await db.execute(select(Location).where(Location.name.in_(enabled_point_names)))).scalars().all())
         for location in locations:
             db.add(
@@ -533,7 +570,7 @@ async def create_service(payload: dict, db: AsyncSession = Depends(get_db), user
             )
 
     await db.commit()
-    return {"id": service.id, "slug": service.slug, "enabled_points": enabled_point_names}
+    return {"id": service.id, "slug": service.slug, "enabled_points": enabled_point_names, "point_prices": point_prices_map}
 
 
 @router.patch("/services/{service_id}")
@@ -561,8 +598,12 @@ async def update_service(service_id: int, payload: dict, db: AsyncSession = Depe
         service.is_active = bool(payload.get("is_active"))
 
     enabled_point_names = None
-    if "enabled_points" in payload:
-        enabled_point_names = _normalize_point_names(payload.get("enabled_points", []))
+    if "enabled_points" in payload or "point_prices" in payload:
+        point_prices_map = _normalize_point_prices_map(payload.get("point_prices", {}))
+        if point_prices_map:
+            enabled_point_names = list(point_prices_map.keys())
+        else:
+            enabled_point_names = _normalize_point_names(payload.get("enabled_points", []))
 
         existing_rows = list(
             (
@@ -584,19 +625,51 @@ async def update_service(service_id: int, payload: dict, db: AsyncSession = Depe
             if location_id not in target_location_ids:
                 await db.delete(row)
 
+        location_name_by_id = {int(location.id): str(location.name or "").strip() for location in locations}
+
         for location_id in target_location_ids:
             if location_id in existing_by_location:
+                if point_prices_map:
+                    point_name = location_name_by_id.get(location_id, "")
+                    existing_by_location[location_id].price = float(point_prices_map.get(point_name, 0.0))
                 continue
+            location_name = location_name_by_id.get(location_id, "")
+            initial_price = float(service.base_price or 0)
+            if point_prices_map and location_name:
+                initial_price = float(point_prices_map.get(location_name, initial_price))
             db.add(
                 LocationPrice(
                     location_id=location_id,
                     service_id=int(service.id),
-                    price=float(service.base_price or 0),
+                    price=initial_price,
                 )
             )
 
+        if point_prices_map:
+            for location_id, row in existing_by_location.items():
+                if location_id not in target_location_ids:
+                    continue
+                point_name = location_name_by_id.get(location_id, "")
+                if not point_name:
+                    continue
+                row.price = float(point_prices_map.get(point_name, row.price or 0))
+
     await db.commit()
     await db.refresh(service)
+
+    updated_rows = list(
+        (
+            await db.execute(select(LocationPrice).where(LocationPrice.service_id == int(service.id)))
+        ).scalars().all()
+    )
+    updated_location_ids = [int(row.location_id) for row in updated_rows]
+    updated_locations = list((await db.execute(select(Location).where(Location.id.in_(updated_location_ids)))).scalars().all()) if updated_location_ids else []
+    location_name_by_id = {int(location.id): str(location.name or "").strip() for location in updated_locations}
+    updated_point_prices = {
+        location_name_by_id[int(row.location_id)]: float(row.price or 0)
+        for row in updated_rows
+        if location_name_by_id.get(int(row.location_id))
+    }
 
     return {
         "ok": True,
@@ -608,6 +681,7 @@ async def update_service(service_id: int, payload: dict, db: AsyncSession = Depe
         "is_active": bool(service.is_active),
         "calculator_schema": service.calculator_schema or {},
         "enabled_points": enabled_point_names,
+        "point_prices": updated_point_prices,
     }
 
 

@@ -1,160 +1,128 @@
 {% extends "layout.html" %}
 {% block title %}Услуги и цены{% endblock %}
 {% block content %}
-<h4 class="fw-bold mb-4"><i class="bi bi-currency-exchange me-2"></i>Управление услугами и ценами</h4>
+<div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+    <h4 class="fw-bold mb-0"><i class="bi bi-currency-exchange me-2"></i>Услуги и цены</h4>
+    <button id="service-open-create" class="btn btn-primary" type="button">
+        <i class="bi bi-plus-circle me-1"></i>Добавить услугу
+    </button>
+</div>
 
-<div class="row g-3">
-    <div class="col-12 col-xl-7">
-        <div class="card border-0 shadow-sm">
-            <div class="card-body">
-                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-                    <h5 class="mb-0">Каталог услуг</h5>
-                    <div class="d-flex gap-2 align-items-center">
-                        <input id="services-query" type="search" class="form-control form-control-sm" placeholder="Поиск по имени или slug" style="width: 240px;">
-                        <div class="form-check m-0">
-                            <input class="form-check-input" type="checkbox" id="services-include-inactive" checked>
-                            <label class="form-check-label small" for="services-include-inactive">Показывать отключенные</label>
-                        </div>
-                        <button id="services-reload" class="btn btn-sm btn-outline-secondary">
-                            <i class="bi bi-arrow-clockwise"></i>
-                        </button>
-                    </div>
+<div class="card border-0 shadow-sm">
+    <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <div class="d-flex gap-2 align-items-center flex-grow-1">
+                <input id="services-query" type="search" class="form-control" placeholder="Поиск по имени, slug или категории">
+                <div class="form-check m-0">
+                    <input class="form-check-input" type="checkbox" id="services-include-inactive" checked>
+                    <label class="form-check-label small" for="services-include-inactive">Показывать отключенные</label>
                 </div>
-
-                <div class="table-responsive">
-                    <table class="table table-sm align-middle mb-0" id="services-table">
-                        <thead class="table-light">
-                            <tr>
-                                <th>ID</th>
-                                <th>Slug</th>
-                                <th>Название</th>
-                                <th>Категория</th>
-                                <th>Наша цена</th>
-                                <th>Статус</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td colspan="6" class="text-muted">Загрузка...</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-                <div id="services-status" class="small text-muted mt-2"></div>
             </div>
+            <button id="services-reload" class="btn btn-outline-secondary" type="button">
+                <i class="bi bi-arrow-clockwise"></i>
+            </button>
         </div>
+
+        <div class="table-responsive d-none d-md-block">
+            <table class="table table-sm align-middle mb-0" id="services-table">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Slug</th>
+                        <th>Название</th>
+                        <th>Категория</th>
+                        <th>Базовая</th>
+                        <th>Точек</th>
+                        <th>Статус</th>
+                        <th class="text-end">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td colspan="8" class="text-muted">Загрузка...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="services-cards" class="d-md-none vstack gap-2"></div>
+        <div id="services-status" class="small text-muted mt-2"></div>
     </div>
+</div>
 
-    <div class="col-12 col-xl-5">
-        <div class="card border-0 shadow-sm">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="mb-0" id="service-editor-title">Новая услуга</h5>
-                    <button id="service-new" class="btn btn-sm btn-outline-primary">Новая</button>
-                </div>
-
+<div class="modal fade" id="service-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title" id="service-modal-title">Новая услуга</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body pt-3">
                 <form id="service-editor-form" class="row g-3" autocomplete="off">
                     <input type="hidden" id="service-id">
-                    <div class="col-12 col-md-6">
+                    <div class="col-12 col-lg-4">
                         <label class="form-label">Slug</label>
                         <input id="service-slug" class="form-control" required maxlength="150">
                     </div>
-                    <div class="col-12 col-md-6">
-                        <label class="form-label">Категория</label>
-                        <input id="service-category" class="form-control" maxlength="30" placeholder="Например, Телефоны">
-                    </div>
-                    <div class="col-12">
+                    <div class="col-12 col-lg-4">
                         <label class="form-label">Название</label>
                         <input id="service-name" class="form-control" required maxlength="255">
                     </div>
-                    <div class="col-12 col-md-6">
-                        <label class="form-label">Наша цена (базовая)</label>
+                    <div class="col-12 col-lg-4">
+                        <label class="form-label">Категория</label>
+                        <input id="service-category" class="form-control" maxlength="30" placeholder="Например: Телефоны">
+                    </div>
+
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">Базовая цена (RUB)</label>
                         <input id="service-base-price" type="number" step="0.01" class="form-control" required>
                     </div>
-                    <div class="col-12 col-md-6 d-flex align-items-end">
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">Валюта</label>
+                        <input id="service-currency" class="form-control" value="RUB" maxlength="10">
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <label class="form-label">Округление</label>
+                        <input id="service-round-to" type="number" class="form-control" value="2" min="0" max="4" step="1">
+                    </div>
+
+                    <div class="col-12">
                         <div class="form-check">
                             <input id="service-is-active" class="form-check-input" type="checkbox" checked>
                             <label class="form-check-label" for="service-is-active">Активна</label>
                         </div>
                     </div>
-                    <div class="col-12 col-md-6">
-                        <label class="form-label">Валюта</label>
-                        <input id="service-currency" class="form-control" value="RUB" maxlength="10">
-                    </div>
-                    <div class="col-12 col-md-6">
-                        <label class="form-label">Округление</label>
-                        <input id="service-round-to" type="number" class="form-control" value="2" min="0" max="4" step="1">
-                    </div>
+
                     <div class="col-12">
-                        <label class="form-label mb-1">Доступна в точках</label>
-                        <div id="service-points-availability" class="border rounded p-2" style="max-height: 180px; overflow: auto;">
-                            <div class="small text-muted">Загрузка списка точек...</div>
-                        </div>
-                        <div class="form-text">Отметьте точки, где услуга доступна в калькуляторе.</div>
+                        <label class="form-label mb-1">Цены по точкам (в одном поле)</label>
+                        <textarea id="service-point-prices" class="form-control service-price-editor" rows="8" placeholder="Пример:\nТочка 1:1500\nТочка 2:1800"></textarea>
+                        <div class="form-text" id="service-points-hint">Укажите по одной строке: Название точки:Цена. Это одновременно и список доступных точек для услуги.</div>
                     </div>
+
                     <div class="col-12">
                         <div class="d-flex justify-content-between align-items-center mb-2">
                             <label class="form-label mb-0">Поля калькулятора цены</label>
                             <button type="button" class="btn btn-sm btn-outline-primary" id="service-field-add">Добавить поле</button>
                         </div>
                         <div id="service-fields-builder" class="vstack gap-2"></div>
-                        <div class="form-text">Поле "часы работы" исключено из визуального редактора.</div>
                     </div>
+
                     <div class="col-12">
                         <details>
                             <summary class="small text-muted">Технический JSON (просмотр)</summary>
                             <textarea id="service-schema-preview" class="form-control mt-2" rows="8" readonly></textarea>
                         </details>
                     </div>
-                    <div class="col-12 d-flex flex-wrap gap-2">
-                        <button type="submit" class="btn btn-primary" id="service-save">
-                            <i class="bi bi-save me-1"></i>Сохранить
-                        </button>
-                        <button type="button" class="btn btn-outline-danger" id="service-delete" disabled>
-                            <i class="bi bi-trash me-1"></i>Удалить
-                        </button>
-                    </div>
                 </form>
-                <div id="service-editor-status" class="small text-muted mt-2"></div>
+                <div id="service-editor-status" class="small mt-2"></div>
             </div>
-        </div>
-    </div>
-
-    <div class="col-12">
-        <div class="card border-0 shadow-sm">
-            <div class="card-body">
-                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-                    <h5 class="mb-0">Матрица цен по точкам</h5>
-                    <div class="d-flex gap-2 align-items-center">
-                        <div id="price-category-filter" class="btn-group btn-group-sm" role="group" aria-label="Фильтр категорий">
-                            <button type="button" class="btn btn-outline-secondary active" data-category="all">Все</button>
-                            <button type="button" class="btn btn-outline-secondary" data-category="Приставки">Приставки</button>
-                            <button type="button" class="btn btn-outline-secondary" data-category="Геймпады">Геймпады</button>
-                            <button type="button" class="btn btn-outline-secondary" data-category="Телефоны">Телефоны</button>
-                        </div>
-                        <button id="point-prices-reload" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-clockwise"></i></button>
-                    </div>
-                </div>
-
-                <div class="table-responsive d-none d-md-block point-prices-table-wrap">
-                    <table class="table table-sm align-middle mb-0" id="point-prices-table">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Загрузка...</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td class="text-muted">Загрузка матрицы цен...</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-
-                <div id="point-prices-cards" class="d-md-none vstack gap-2"></div>
-
-                <div class="mt-3 d-flex gap-2 align-items-center">
-                    <span id="point-manager-status" class="small text-muted"></span>
+            <div class="modal-footer border-0 pt-0 d-flex justify-content-between">
+                <button type="button" class="btn btn-outline-danger" id="service-delete" disabled>
+                    <i class="bi bi-trash me-1"></i>Удалить
+                </button>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Отмена</button>
+                    <button type="button" class="btn btn-primary" id="service-save">
+                        <i class="bi bi-save me-1"></i>Сохранить
+                    </button>
                 </div>
             </div>
         </div>
@@ -166,22 +134,18 @@
 <script>
 (function () {
     const tableBody = document.querySelector('#services-table tbody');
+    const cardsWrap = document.getElementById('services-cards');
     const statusEl = document.getElementById('services-status');
-    const editorStatusEl = document.getElementById('service-editor-status');
     const queryInput = document.getElementById('services-query');
     const includeInactiveInput = document.getElementById('services-include-inactive');
     const reloadBtn = document.getElementById('services-reload');
-    const newBtn = document.getElementById('service-new');
-    const form = document.getElementById('service-editor-form');
+
+    const openCreateBtn = document.getElementById('service-open-create');
+    const modalEl = document.getElementById('service-modal');
+    const modal = new bootstrap.Modal(modalEl);
+    const modalTitle = document.getElementById('service-modal-title');
+    const saveBtn = document.getElementById('service-save');
     const deleteBtn = document.getElementById('service-delete');
-    const priceCategoryFilter = document.getElementById('price-category-filter');
-    const pointPricesReloadBtn = document.getElementById('point-prices-reload');
-    const pointPricesTable = document.getElementById('point-prices-table');
-    const pointPricesTableHead = pointPricesTable.querySelector('thead');
-    const pointPricesTableBody = document.querySelector('#point-prices-table tbody');
-    const pointPricesCards = document.getElementById('point-prices-cards');
-    const pointStatusEl = document.getElementById('point-manager-status');
-    const pointsAvailabilityEl = document.getElementById('service-points-availability');
 
     const idInput = document.getElementById('service-id');
     const slugInput = document.getElementById('service-slug');
@@ -191,50 +155,51 @@
     const isActiveInput = document.getElementById('service-is-active');
     const currencyInput = document.getElementById('service-currency');
     const roundToInput = document.getElementById('service-round-to');
+    const pointPricesInput = document.getElementById('service-point-prices');
+    const pointsHint = document.getElementById('service-points-hint');
+
+    const editorStatusEl = document.getElementById('service-editor-status');
     const fieldAddBtn = document.getElementById('service-field-add');
     const fieldsBuilder = document.getElementById('service-fields-builder');
     const schemaPreviewInput = document.getElementById('service-schema-preview');
-    const editorTitle = document.getElementById('service-editor-title');
 
     let services = [];
     let allPoints = [];
-    let matrixData = { points: [], services: [], can_edit_own_price: false, show_own_price: true };
-    let selectedMatrixCategory = 'all';
-    const matrixDebounceTimers = new Map();
 
-    function getCurrentSelectedService() {
-        const id = Number(idInput.value || 0);
-        if (id <= 0) return null;
-        return services.find(function (item) { return Number(item.id) === id; }) || null;
+    function setStatus(text, isError) {
+        statusEl.textContent = text || '';
+        statusEl.className = isError ? 'small text-danger mt-2' : 'small text-muted mt-2';
     }
 
-    function renderPointsAvailability(selectedPoints) {
-        const selected = new Set((Array.isArray(selectedPoints) ? selectedPoints : []).map(function (item) {
-            return String(item || '').trim().toLowerCase();
-        }));
-
-        if (!allPoints.length) {
-            pointsAvailabilityEl.innerHTML = '<div class="small text-muted">Сначала добавьте точки.</div>';
-            return;
-        }
-
-        pointsAvailabilityEl.innerHTML = allPoints.map(function (point, index) {
-            const pointName = String(point || '').trim();
-            const checked = selected.has(pointName.toLowerCase()) ? 'checked' : '';
-            const inputId = `service-point-${index}`;
-            return `
-                <div class="form-check">
-                    <input class="form-check-input service-point-check" type="checkbox" value="${pointName}" id="${inputId}" ${checked}>
-                    <label class="form-check-label" for="${inputId}">${pointName}</label>
-                </div>
-            `;
-        }).join('');
+    function setEditorStatus(text, isError) {
+        editorStatusEl.textContent = text || '';
+        editorStatusEl.className = isError ? 'small text-danger mt-2' : 'small text-success mt-2';
     }
 
-    function collectEnabledPoints() {
-        return Array.from(pointsAvailabilityEl.querySelectorAll('.service-point-check:checked')).map(function (input) {
-            return String(input.value || '').trim();
-        }).filter(Boolean);
+    function formatMoney(value) {
+        return new Intl.NumberFormat('ru-RU').format(Number(value || 0));
+    }
+
+    function parsePointPricesText(text) {
+        const map = {};
+        String(text || '').split(/\r?\n/).forEach(function (line) {
+            const value = String(line || '').trim();
+            if (!value) return;
+            const idx = value.lastIndexOf(':');
+            if (idx <= 0) return;
+            const point = value.slice(0, idx).trim();
+            const price = Number(value.slice(idx + 1).trim());
+            if (!point || Number.isNaN(price)) return;
+            map[point] = price;
+        });
+        return map;
+    }
+
+    function pointPricesToText(pointPrices) {
+        const source = pointPrices && typeof pointPrices === 'object' ? pointPrices : {};
+        return Object.entries(source).map(function (entry) {
+            return `${entry[0]}:${Number(entry[1] || 0)}`;
+        }).join('\n');
     }
 
     function isHoursFieldName(name) {
@@ -247,20 +212,19 @@
         String(text || '').split(/\r?\n/).forEach(function (line) {
             const value = String(line || '').trim();
             if (!value) return;
-            const parts = value.split(':');
-            const key = String(parts[0] || '').trim();
+            const idx = value.indexOf(':');
+            const key = idx >= 0 ? value.slice(0, idx).trim() : value;
+            const priceRaw = idx >= 0 ? value.slice(idx + 1).trim() : '0';
+            const price = Number(priceRaw);
             if (!key) return;
-            const price = Number(String(parts.slice(1).join(':') || '0').trim() || 0);
             result[key] = Number.isNaN(price) ? 0 : price;
         });
         return result;
     }
 
     function choicesToText(choices) {
-        const source = choices && typeof choices === 'object' && !Array.isArray(choices) ? choices : {};
-        return Object.entries(source).map(function (entry) {
-            return `${entry[0]}:${entry[1]}`;
-        }).join('\n');
+        const source = choices && typeof choices === 'object' ? choices : {};
+        return Object.entries(source).map(function (entry) { return `${entry[0]}:${entry[1]}`; }).join('\n');
     }
 
     function collectFieldsFromBuilder() {
@@ -274,9 +238,9 @@
             if (!name || isHoursFieldName(name)) return;
 
             const field = {
-                name,
+                name: name,
                 label: label || name,
-                type,
+                type: type,
             };
 
             if (type === 'select') {
@@ -285,7 +249,6 @@
             } else {
                 field.price = Number.isNaN(price) ? 0 : price;
             }
-
             fields.push(field);
         });
         return fields;
@@ -346,7 +309,7 @@
                             <button type="button" class="btn btn-sm btn-outline-danger js-field-remove">Удалить</button>
                         </div>
                         <div class="col-12 js-choices-wrap" style="${type === 'select' ? '' : 'display:none;'}">
-                            <label class="form-label small mb-1">Опции (по строкам, формат ключ:цена)</label>
+                            <label class="form-label small mb-1">Опции (по строкам: ключ:цена)</label>
                             <textarea class="form-control form-control-sm js-field-choices" rows="3">${choicesText}</textarea>
                         </div>
                     </div>
@@ -357,32 +320,53 @@
         refreshSchemaPreview();
     }
 
-    function setStatus(text, isError) {
-        statusEl.textContent = text || '';
-        statusEl.className = isError ? 'small text-danger mt-2' : 'small text-muted mt-2';
-    }
-
-    function setEditorStatus(text, isError) {
-        editorStatusEl.textContent = text || '';
-        editorStatusEl.className = isError ? 'small text-danger mt-2' : 'small text-success mt-2';
-    }
-
-    function setPointStatus(text, isError) {
-        pointStatusEl.textContent = text || '';
-        pointStatusEl.className = isError ? 'small text-danger' : 'small text-muted';
-    }
-
-    function formatMoney(value) {
-        const num = Number(value || 0);
-        return new Intl.NumberFormat('ru-RU').format(num);
-    }
-
-    function parseSchemaOrThrow() {
-        const schema = buildSchemaFromBuilder();
-        if (!Array.isArray(schema.fields)) {
-            throw new Error('invalid_schema');
+    function renderRows() {
+        if (!services.length) {
+            tableBody.innerHTML = '<tr><td colspan="8" class="text-muted">Нет услуг по текущему фильтру.</td></tr>';
+            cardsWrap.innerHTML = '<div class="small text-muted">Нет услуг по текущему фильтру.</div>';
+            return;
         }
-        return schema;
+
+        tableBody.innerHTML = services.map(function (service) {
+            const pointsCount = Object.keys(service.point_prices || {}).length;
+            const activeClass = service.is_active ? 'bg-success' : 'bg-secondary';
+            const activeLabel = service.is_active ? 'Активна' : 'Отключена';
+            return `
+                <tr>
+                    <td>${service.id}</td>
+                    <td><code>${service.slug || ''}</code></td>
+                    <td>${service.name || ''}</td>
+                    <td>${service.category || ''}</td>
+                    <td>${formatMoney(service.base_price)} RUB</td>
+                    <td>${pointsCount}</td>
+                    <td><span class="badge ${activeClass}">${activeLabel}</span></td>
+                    <td class="text-end">
+                        <button class="btn btn-sm btn-outline-primary service-edit-btn" data-id="${service.id}" type="button">Редактировать</button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        cardsWrap.innerHTML = services.map(function (service) {
+            const points = Object.entries(service.point_prices || {}).slice(0, 3).map(function (entry) {
+                return `<span class="badge text-bg-light border me-1 mb-1">${entry[0]}: ${formatMoney(entry[1])}</span>`;
+            }).join('');
+            return `
+                <div class="card border-0 shadow-sm">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div>
+                                <div class="fw-semibold">${service.name || ''}</div>
+                                <div class="small text-muted">${service.slug || ''} · ${service.category || ''}</div>
+                            </div>
+                            <button class="btn btn-sm btn-outline-primary service-edit-btn" data-id="${service.id}" type="button">Изменить</button>
+                        </div>
+                        <div class="small mt-2">Базовая цена: <strong>${formatMoney(service.base_price)} RUB</strong></div>
+                        <div class="mt-2">${points || '<span class="small text-muted">Точки не указаны</span>'}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
     }
 
     function resetForm() {
@@ -394,31 +378,109 @@
         isActiveInput.checked = true;
         currencyInput.value = 'RUB';
         roundToInput.value = '2';
-        renderFieldsBuilder([]);
-        renderPointsAvailability(allPoints);
-        pointsAvailabilityEl.querySelectorAll('.service-point-check').forEach(function (input) {
-            input.checked = true;
-        });
-        editorTitle.textContent = 'Новая услуга';
+        pointPricesInput.value = '';
+        modalTitle.textContent = 'Новая услуга';
         deleteBtn.disabled = true;
+        renderFieldsBuilder([]);
         setEditorStatus('', false);
     }
 
     function fillForm(service) {
         idInput.value = String(service.id || '');
-        slugInput.value = service.slug || '';
-        nameInput.value = service.name || '';
-        categoryInput.value = service.category || '';
+        slugInput.value = String(service.slug || '');
+        nameInput.value = String(service.name || '');
+        categoryInput.value = String(service.category || '');
         basePriceInput.value = Number(service.base_price || 0);
         isActiveInput.checked = Boolean(service.is_active);
+
         const schema = service.calculator_schema || {};
         currencyInput.value = String(schema.currency || 'RUB');
         roundToInput.value = Number(schema.round_to || 2);
+        pointPricesInput.value = pointPricesToText(service.point_prices || {});
         renderFieldsBuilder(Array.isArray(schema.fields) ? schema.fields : []);
-        renderPointsAvailability(Array.isArray(service.enabled_points) ? service.enabled_points : []);
-        editorTitle.textContent = `Редактирование #${service.id}`;
+
+        modalTitle.textContent = `Редактирование #${service.id}`;
         deleteBtn.disabled = Number(service.id || 0) <= 0;
         setEditorStatus('', false);
+    }
+
+    async function loadPoints() {
+        try {
+            const response = await fetch('/api/v1/catalog/points');
+            if (!response.ok) throw new Error('points_failed');
+            allPoints = await response.json();
+            if (allPoints.length) {
+                pointsHint.textContent = `Укажите по одной строке: Название точки:Цена. Доступные точки: ${allPoints.join(', ')}.`;
+            }
+        } catch (_err) {
+            allPoints = [];
+        }
+    }
+
+    async function loadServices() {
+        const q = encodeURIComponent(queryInput.value || '');
+        const includeInactive = includeInactiveInput.checked ? 'true' : 'false';
+        setStatus('Загрузка каталога...', false);
+        try {
+            const response = await fetch(`/api/v1/catalog/services?q=${q}&include_inactive=${includeInactive}`);
+            if (!response.ok) throw new Error('load_failed');
+            services = await response.json();
+            renderRows();
+            setStatus(`Загружено услуг: ${services.length}.`, false);
+        } catch (_err) {
+            services = [];
+            renderRows();
+            setStatus('Не удалось загрузить услуги.', true);
+        }
+    }
+
+    async function saveService() {
+        const pointPrices = parsePointPricesText(pointPricesInput.value);
+        const payload = {
+            slug: String(slugInput.value || '').trim(),
+            name: String(nameInput.value || '').trim(),
+            category: String(categoryInput.value || '').trim(),
+            base_price: Number(basePriceInput.value || 0),
+            is_active: Boolean(isActiveInput.checked),
+            calculator_schema: buildSchemaFromBuilder(),
+            point_prices: pointPrices,
+        };
+
+        if (!payload.slug || !payload.name) {
+            setEditorStatus('Slug и название обязательны.', true);
+            return;
+        }
+
+        const id = Number(idInput.value || 0);
+        const isUpdate = id > 0;
+        const url = isUpdate ? `/api/v1/catalog/services/${id}` : '/api/v1/catalog/services';
+        const method = isUpdate ? 'PATCH' : 'POST';
+
+        saveBtn.disabled = true;
+        try {
+            const response = await fetch(url, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            if (!response.ok) {
+                const data = await response.json().catch(function () { return {}; });
+                throw new Error(data.detail || 'save_failed');
+            }
+
+            setEditorStatus(isUpdate ? 'Услуга обновлена.' : 'Услуга создана.', false);
+            await loadServices();
+            if (isUpdate) {
+                const selected = services.find(function (item) { return Number(item.id) === id; });
+                if (selected) fillForm(selected);
+            } else {
+                resetForm();
+            }
+        } catch (err) {
+            setEditorStatus(`Не удалось сохранить: ${String(err.message || err)}`, true);
+        } finally {
+            saveBtn.disabled = false;
+        }
     }
 
     async function deleteService() {
@@ -428,27 +490,21 @@
             return;
         }
 
-        const name = String(nameInput.value || '').trim() || `#${id}`;
-        if (!window.confirm(`Удалить услугу ${name}?`)) {
+        const serviceName = String(nameInput.value || '').trim() || `#${id}`;
+        if (!window.confirm(`Удалить услугу ${serviceName}?`)) {
             return;
         }
 
         deleteBtn.disabled = true;
-        setEditorStatus('Удаляем услугу...', false);
-
         try {
-            const response = await fetch(`/api/v1/catalog/services/${id}`, {
-                method: 'DELETE',
-            });
+            const response = await fetch(`/api/v1/catalog/services/${id}`, { method: 'DELETE' });
             if (!response.ok) {
                 const data = await response.json().catch(function () { return {}; });
                 throw new Error(data.detail || 'delete_failed');
             }
-
-            resetForm();
             await loadServices();
-            await loadPriceMatrix();
-            setEditorStatus('Услуга удалена.', false);
+            modal.hide();
+            resetForm();
         } catch (err) {
             if (String(err.message || '') === 'service_has_orders') {
                 setEditorStatus('Нельзя удалить услугу: есть связанные заказы.', true);
@@ -462,337 +518,30 @@
         }
     }
 
-    function renderRows() {
-        if (!services.length) {
-            tableBody.innerHTML = '<tr><td colspan="6" class="text-muted">Нет услуг по текущему фильтру.</td></tr>';
-            return;
-        }
-
-        tableBody.innerHTML = services.map(function (service) {
-            const activeClass = service.is_active ? 'bg-success' : 'bg-secondary';
-            const activeLabel = service.is_active ? 'Активна' : 'Отключена';
-            return `
-                <tr class="service-row" data-id="${service.id}">
-                    <td>${service.id}</td>
-                    <td><code>${service.slug}</code></td>
-                    <td>${service.name || ''}</td>
-                    <td>${service.category || ''}</td>
-                    <td>${formatMoney(service.base_price)} RUB</td>
-                    <td><span class="badge ${activeClass}">${activeLabel}</span></td>
-                </tr>
-            `;
-        }).join('');
-
-        tableBody.querySelectorAll('.service-row').forEach(function (row) {
-            row.addEventListener('click', function () {
-                const id = Number(row.dataset.id || 0);
-                const selected = services.find(function (s) { return Number(s.id) === id; });
-                if (!selected) return;
-                fillForm(selected);
-            });
-        });
-    }
-
-    function getFilteredMatrixServices() {
-        const selected = String(selectedMatrixCategory || 'all').trim().toLowerCase();
-        const rows = Array.isArray(matrixData.services) ? matrixData.services : [];
-        if (selected === 'all') {
-            return rows;
-        }
-        return rows.filter(function (item) {
-            return String(item.category || '').trim().toLowerCase() === selected;
-        });
-    }
-
-    function setMatrixCellState(cell, state) {
-        if (!cell) return;
-        cell.classList.remove('matrix-cell-updating', 'matrix-cell-saved', 'matrix-cell-error');
-        if (state) {
-            cell.classList.add(state);
-        }
-    }
-
-    function renderPriceMatrix() {
-        const points = Array.isArray(matrixData.points) ? matrixData.points : [];
-        const rows = getFilteredMatrixServices();
-        const showOwnPrice = Boolean(matrixData.show_own_price);
-        const canEditOwnPrice = Boolean(matrixData.can_edit_own_price);
-
-        allPoints = points.slice();
-        const currentService = getCurrentSelectedService();
-        if (currentService) {
-            renderPointsAvailability(Array.isArray(currentService.enabled_points) ? currentService.enabled_points : []);
-        } else {
-            renderPointsAvailability(allPoints);
-            pointsAvailabilityEl.querySelectorAll('.service-point-check').forEach(function (input) { input.checked = true; });
-        }
-
-        const ownHeader = showOwnPrice ? '<th style="min-width: 170px;">Наша цена</th>' : '';
-        const pointHeaders = points.map(function (point) {
-            return `<th style="min-width: 220px;">${point}</th>`;
-        }).join('');
-
-        pointPricesTableHead.innerHTML = `
-            <tr>
-                <th style="min-width: 240px;">Услуга</th>
-                <th style="min-width: 140px;">Категория</th>
-                ${ownHeader}
-                ${pointHeaders}
-            </tr>
-        `;
-
-        if (!rows.length) {
-            const colSpan = 2 + (showOwnPrice ? 1 : 0) + points.length;
-            pointPricesTableBody.innerHTML = `<tr><td colspan="${colSpan}" class="text-muted">Нет услуг для выбранной категории.</td></tr>`;
-            pointPricesCards.innerHTML = '<div class="small text-muted">Нет услуг для выбранной категории.</div>';
-            return;
-        }
-
-        let lastCategory = '';
-        const tableRows = [];
-        rows.forEach(function (service) {
-            const currentCategory = String(service.category || '').trim();
-            if (currentCategory && currentCategory !== lastCategory) {
-                lastCategory = currentCategory;
-                tableRows.push(`<tr class="table-light"><td colspan="${2 + (showOwnPrice ? 1 : 0) + points.length}" class="fw-semibold">${currentCategory}</td></tr>`);
-            }
-
-            const ownPriceCell = showOwnPrice
-                ? `<td class="matrix-cell" data-cell-key="own::${service.service_id}">${canEditOwnPrice
-                    ? `<input type="number" step="0.01" class="form-control form-control-sm own-price-input" data-service-id="${service.service_id}" value="${Number(service.own_price || 0)}">`
-                    : `<span>${formatMoney(service.own_price)} RUB</span>`
-                }</td>`
-                : '';
-
-            const pointCells = points.map(function (point) {
-                const hasPrice = Object.prototype.hasOwnProperty.call(service.point_prices || {}, point);
-                const priceValue = hasPrice ? Number((service.point_prices || {})[point] || 0) : 0;
-                return `
-                    <td class="matrix-cell" data-cell-key="${service.service_id}::${point}">
-                        <div class="d-flex align-items-center gap-2">
-                            <input type="checkbox" class="form-check-input matrix-enable-input" data-service-id="${service.service_id}" data-point="${point}" ${hasPrice ? 'checked' : ''}>
-                            <input type="number" step="0.01" min="0" class="form-control form-control-sm matrix-price-input" data-service-id="${service.service_id}" data-point="${point}" value="${priceValue}" ${hasPrice ? '' : 'disabled'}>
-                        </div>
-                    </td>
-                `;
-            }).join('');
-
-            tableRows.push(`
-                <tr>
-                    <td>${service.name || ''}</td>
-                    <td>${service.category || ''}</td>
-                    ${ownPriceCell}
-                    ${pointCells}
-                </tr>
-            `);
-        });
-        pointPricesTableBody.innerHTML = tableRows.join('');
-
-        pointPricesCards.innerHTML = rows.map(function (service) {
-            const ownPriceBlock = showOwnPrice
-                ? `<div class="small mb-2"><span class="text-muted">Наша цена:</span> ${canEditOwnPrice
-                    ? `<input type="number" step="0.01" class="form-control form-control-sm mt-1 own-price-input" data-service-id="${service.service_id}" value="${Number(service.own_price || 0)}">`
-                    : `${formatMoney(service.own_price)} RUB`
-                }</div>`
-                : '';
-
-            const pointRows = points.map(function (point) {
-                const hasPrice = Object.prototype.hasOwnProperty.call(service.point_prices || {}, point);
-                const priceValue = hasPrice ? Number((service.point_prices || {})[point] || 0) : 0;
-                return `
-                    <div class="d-flex align-items-center gap-2 mb-2 matrix-cell" data-cell-key="${service.service_id}::${point}">
-                        <input type="checkbox" class="form-check-input matrix-enable-input" data-service-id="${service.service_id}" data-point="${point}" ${hasPrice ? 'checked' : ''}>
-                        <div class="flex-grow-1">
-                            <div class="small">${point}</div>
-                            <input type="number" step="0.01" min="0" class="form-control form-control-sm matrix-price-input" data-service-id="${service.service_id}" data-point="${point}" value="${priceValue}" ${hasPrice ? '' : 'disabled'}>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-
-            return `
-                <div class="card border-0 shadow-sm">
-                    <div class="card-body">
-                        <div class="fw-semibold">${service.name || ''}</div>
-                        <div class="small text-muted mb-2">${service.category || ''}</div>
-                        ${ownPriceBlock}
-                        ${pointRows}
-                    </div>
-                </div>
-            `;
-        }).join('');
-    }
-
-    async function loadPriceMatrix() {
-        setPointStatus('Загрузка матрицы цен...', false);
-        try {
-            const response = await fetch('/api/v1/catalog/prices/matrix');
-            if (!response.ok) {
-                throw new Error('matrix_load_failed');
-            }
-            matrixData = await response.json();
-            renderPriceMatrix();
-            setPointStatus(`Услуг: ${getFilteredMatrixServices().length}. Точек: ${(matrixData.points || []).length}.`, false);
-        } catch (_err) {
-            pointPricesTableHead.innerHTML = '<tr><th>Ошибка</th></tr>';
-            pointPricesTableBody.innerHTML = '<tr><td class="text-danger">Не удалось загрузить матрицу цен.</td></tr>';
-            pointPricesCards.innerHTML = '<div class="small text-danger">Не удалось загрузить матрицу цен.</div>';
-            setPointStatus('Не удалось загрузить матрицу цен.', true);
-        }
-    }
-
-    async function saveMatrixCell(payload, cellKey) {
-        const cells = document.querySelectorAll(`[data-cell-key="${cellKey}"]`);
-        cells.forEach(function (cell) { setMatrixCellState(cell, 'matrix-cell-updating'); });
-        try {
-            const response = await fetch('/api/v1/catalog/prices/matrix/cell', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
-            if (!response.ok) {
-                throw new Error('matrix_save_failed');
-            }
-            const result = await response.json();
-            if (result && result.ok) {
-                setPointStatus('Изменения сохранены.', false);
-                cells.forEach(function (cell) { setMatrixCellState(cell, 'matrix-cell-saved'); });
-                window.setTimeout(function () {
-                    cells.forEach(function (cell) { setMatrixCellState(cell, ''); });
-                }, 900);
-            }
-        } catch (_err) {
-            setPointStatus('Ошибка сохранения. Проверьте доступ и соединение.', true);
-            cells.forEach(function (cell) { setMatrixCellState(cell, 'matrix-cell-error'); });
-        }
-    }
-
-    async function saveOwnPrice(serviceId, value, cellKey) {
-        const cells = document.querySelectorAll(`[data-cell-key="${cellKey}"]`);
-        cells.forEach(function (cell) { setMatrixCellState(cell, 'matrix-cell-updating'); });
-        try {
-            const response = await fetch(`/api/v1/catalog/services/${serviceId}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ base_price: Number(value || 0) }),
-            });
-            if (!response.ok) {
-                throw new Error('own_price_save_failed');
-            }
-            const target = (matrixData.services || []).find(function (item) { return Number(item.service_id) === Number(serviceId); });
-            if (target) {
-                target.own_price = Number(value || 0);
-            }
-            cells.forEach(function (cell) { setMatrixCellState(cell, 'matrix-cell-saved'); });
-            setPointStatus('Наша цена обновлена.', false);
-            window.setTimeout(function () {
-                cells.forEach(function (cell) { setMatrixCellState(cell, ''); });
-            }, 900);
-        } catch (_err) {
-            setPointStatus('Наша цена редактируется только админом.', true);
-            cells.forEach(function (cell) { setMatrixCellState(cell, 'matrix-cell-error'); });
-        }
-    }
-
-    async function loadPoints() {
-        try {
-            const response = await fetch('/api/v1/catalog/points');
-            if (!response.ok) {
-                throw new Error('points_load_failed');
-            }
-            allPoints = await response.json();
-            const currentService = getCurrentSelectedService();
-            renderPointsAvailability(currentService && Array.isArray(currentService.enabled_points) ? currentService.enabled_points : allPoints);
-            if (!currentService) {
-                pointsAvailabilityEl.querySelectorAll('.service-point-check').forEach(function (input) { input.checked = true; });
-            }
-        } catch (_err) {
-            pointsAvailabilityEl.innerHTML = '<div class="small text-muted">Не удалось загрузить список точек.</div>';
-        }
-    }
-
-    async function loadServices() {
-        const q = encodeURIComponent(queryInput.value || '');
-        const includeInactive = includeInactiveInput.checked ? 'true' : 'false';
-        setStatus('Загрузка каталога...', false);
-
-        try {
-            const response = await fetch(`/api/v1/catalog/services?q=${q}&include_inactive=${includeInactive}`);
-            if (!response.ok) {
-                throw new Error('load_failed');
-            }
-            services = await response.json();
-            renderRows();
-            setStatus(`Загружено услуг: ${services.length}.`, false);
-        } catch (_err) {
-            services = [];
-            renderRows();
-            setStatus('Не удалось загрузить услуги.', true);
-        }
-    }
-
-    async function saveService(event) {
-        event.preventDefault();
-
-        let schema;
-        try {
-            schema = parseSchemaOrThrow();
-        } catch (_err) {
-            setEditorStatus('Ошибка JSON: проверьте формат схемы.', true);
-            return;
-        }
-
-        const payload = {
-            slug: slugInput.value.trim(),
-            name: nameInput.value.trim(),
-            category: categoryInput.value.trim(),
-            base_price: Number(basePriceInput.value || 0),
-            is_active: Boolean(isActiveInput.checked),
-            calculator_schema: schema,
-            enabled_points: collectEnabledPoints(),
-        };
-
-        if (!payload.slug || !payload.name) {
-            setEditorStatus('Slug и название обязательны.', true);
-            return;
-        }
-
-        const id = Number(idInput.value || 0);
-        const isUpdate = id > 0;
-        const url = isUpdate ? `/api/v1/catalog/services/${id}` : '/api/v1/catalog/services';
-        const method = isUpdate ? 'PATCH' : 'POST';
-
-        try {
-            const response = await fetch(url, {
-                method,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
-
-            if (!response.ok) {
-                const data = await response.json().catch(function () { return {}; });
-                throw new Error(data.detail || 'save_failed');
-            }
-
-            setEditorStatus(isUpdate ? 'Услуга обновлена.' : 'Услуга создана.', false);
-            await loadServices();
-
-            if (!isUpdate) {
-                resetForm();
-            }
-        } catch (err) {
-            setEditorStatus(`Не удалось сохранить: ${String(err.message || err)}`, true);
-        }
-    }
-
     queryInput.addEventListener('input', function () {
         window.clearTimeout(queryInput._timer);
         queryInput._timer = window.setTimeout(loadServices, 350);
     });
+
     includeInactiveInput.addEventListener('change', loadServices);
     reloadBtn.addEventListener('click', loadServices);
-    newBtn.addEventListener('click', resetForm);
-    form.addEventListener('submit', saveService);
+
+    openCreateBtn.addEventListener('click', function () {
+        resetForm();
+        modal.show();
+    });
+
+    document.addEventListener('click', function (event) {
+        const editBtn = event.target.closest('.service-edit-btn');
+        if (!editBtn) return;
+        const id = Number(editBtn.dataset.id || 0);
+        const selected = services.find(function (item) { return Number(item.id) === id; });
+        if (!selected) return;
+        fillForm(selected);
+        modal.show();
+    });
+
+    saveBtn.addEventListener('click', saveService);
     deleteBtn.addEventListener('click', deleteService);
 
     fieldAddBtn.addEventListener('click', function () {
@@ -827,93 +576,13 @@
     currencyInput.addEventListener('input', refreshSchemaPreview);
     roundToInput.addEventListener('input', refreshSchemaPreview);
 
-    priceCategoryFilter.addEventListener('click', function (event) {
-        const button = event.target.closest('[data-category]');
-        if (!button) return;
-        selectedMatrixCategory = String(button.dataset.category || 'all');
-        priceCategoryFilter.querySelectorAll('[data-category]').forEach(function (el) { el.classList.remove('active'); });
-        button.classList.add('active');
-        renderPriceMatrix();
-        setPointStatus(`Показана категория: ${selectedMatrixCategory}.`, false);
-    });
-
-    pointPricesReloadBtn.addEventListener('click', loadPriceMatrix);
-
-    document.addEventListener('change', function (event) {
-        const checkbox = event.target.closest('.matrix-enable-input');
-        if (!checkbox) return;
-
-        const serviceId = Number(checkbox.dataset.serviceId || 0);
-        const point = String(checkbox.dataset.point || '').trim();
-        const enabled = Boolean(checkbox.checked);
-        const cellKey = `${serviceId}::${point}`;
-
-        const linkedInputs = document.querySelectorAll(`.matrix-price-input[data-service-id="${serviceId}"][data-point="${point}"]`);
-        linkedInputs.forEach(function (input) {
-            input.disabled = !enabled;
-            if (!enabled) {
-                input.value = '0';
-            }
-        });
-
-        const sourceInput = Array.from(linkedInputs)[0];
-        const price = sourceInput ? Number(sourceInput.value || 0) : 0;
-        saveMatrixCell({ service_id: serviceId, point: point, enabled: enabled, price: price }, cellKey);
-
-        const targetService = (matrixData.services || []).find(function (item) { return Number(item.service_id) === serviceId; });
-        if (targetService) {
-            targetService.point_prices = targetService.point_prices || {};
-            if (enabled) {
-                targetService.point_prices[point] = price;
-            } else {
-                delete targetService.point_prices[point];
-            }
-        }
-    });
-
-    document.addEventListener('input', function (event) {
-        const pointInput = event.target.closest('.matrix-price-input');
-        if (pointInput) {
-            const serviceId = Number(pointInput.dataset.serviceId || 0);
-            const point = String(pointInput.dataset.point || '').trim();
-            if (!serviceId || !point || pointInput.disabled) return;
-
-            const key = `point::${serviceId}::${point}`;
-            if (matrixDebounceTimers.has(key)) {
-                window.clearTimeout(matrixDebounceTimers.get(key));
-            }
-
-            const value = Number(pointInput.value || 0);
-            matrixDebounceTimers.set(key, window.setTimeout(function () {
-                saveMatrixCell({ service_id: serviceId, point: point, price: value }, `${serviceId}::${point}`);
-                const targetService = (matrixData.services || []).find(function (item) { return Number(item.service_id) === serviceId; });
-                if (targetService) {
-                    targetService.point_prices = targetService.point_prices || {};
-                    targetService.point_prices[point] = value;
-                }
-            }, 500));
-            return;
-        }
-
-        const ownInput = event.target.closest('.own-price-input');
-        if (!ownInput) return;
-        const serviceId = Number(ownInput.dataset.serviceId || 0);
-        if (!serviceId) return;
-
-        const key = `own::${serviceId}`;
-        if (matrixDebounceTimers.has(key)) {
-            window.clearTimeout(matrixDebounceTimers.get(key));
-        }
-        const value = Number(ownInput.value || 0);
-        matrixDebounceTimers.set(key, window.setTimeout(function () {
-            saveOwnPrice(serviceId, value, `own::${serviceId}`);
-        }, 500));
+    modalEl.addEventListener('hidden.bs.modal', function () {
+        setEditorStatus('', false);
     });
 
     resetForm();
-    loadServices();
     loadPoints();
-    loadPriceMatrix();
+    loadServices();
 })();
 </script>
 {% endblock %}

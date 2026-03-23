@@ -268,6 +268,33 @@
     border-radius: 0.75rem;
 }
 
+.service-price-editor {
+    font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+    font-size: 0.9rem;
+    line-height: 1.45;
+}
+
+#service-modal .modal-dialog {
+    max-width: 1080px;
+}
+
+#services-cards .card {
+    border-radius: 0.9rem;
+}
+
+.logistics-card .card-header {
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.logistics-mobile-item {
+    border-radius: 0.85rem;
+    background: linear-gradient(160deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.logistics-mobile-item .badge {
+    white-space: nowrap;
+}
+
 /* Badges */
 .badge {
     font-weight: 500;
@@ -305,6 +332,18 @@
 
     .calc-actions-fixed {
         padding-bottom: 0.5rem;
+    }
+
+    .logistics-page-head .btn {
+        width: 100%;
+    }
+
+    .table-responsive {
+        border-radius: 0.75rem;
+    }
+
+    .card .card-body {
+        padding: 0.95rem;
     }
 
     /* Table -> card transform handled via d-none d-md-block classes in template */

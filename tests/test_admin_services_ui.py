@@ -29,9 +29,7 @@ async def test_admin_services_page_contains_matrix_and_category_filters(db_sessi
 
     assert response.status_code == 200
     html = response.text
-    assert 'id="price-category-filter"' in html
-    assert 'data-category="all"' in html
-    assert 'data-category="Приставки"' in html
-    assert 'data-category="Геймпады"' in html
-    assert 'data-category="Телефоны"' in html
-    assert 'id="point-prices-table"' in html
+    assert 'id="service-modal"' in html
+    assert 'id="service-open-create"' in html
+    assert 'id="service-point-prices"' in html
+    assert 'id="services-table"' in html
