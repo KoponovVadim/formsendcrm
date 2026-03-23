@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from app.auth import get_current_user
 from app.models import DynamicRecord, ModuleConfig
-from models.crm import Executor, ExecutorSkill, Location, LocationPrice, Service
+from models.crm import Client, Executor, ExecutorSkill, Location, LocationPrice, Order, OrderItem, Service
 from models.omnichannel import Conversation, Message
 
 
@@ -365,6 +365,74 @@ async def test_catalog_service_enabled_points_create_and_update(async_client, db
     )
     updated_points = sorted([location_name_by_id[int(row.location_id)] for row in updated_prices])
     assert updated_points == ["Point B"]
+
+
+async def test_catalog_delete_service_removes_location_prices(async_client, db_session):
+    service = Service(
+        slug="delete-service-ok",
+        name="Delete Service OK",
+        category="repair",
+        is_active=True,
+        base_price=100,
+        calculator_schema={"fields": []},
+    )
+    point = Location(name="Delete Point", is_active=True)
+    db_session.add_all([service, point])
+    await db_session.flush()
+    db_session.add(LocationPrice(location_id=point.id, service_id=service.id, price=199))
+    await db_session.commit()
+
+    response = await async_client.delete(f"/api/v1/catalog/services/{service.id}")
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+
+    deleted_service = (await db_session.execute(select(Service).where(Service.id == service.id))).scalar_one_or_none()
+    assert deleted_service is None
+    remaining_prices = list(
+        (
+            await db_session.execute(select(LocationPrice).where(LocationPrice.service_id == service.id))
+        ).scalars().all()
+    )
+    assert remaining_prices == []
+
+
+async def test_catalog_delete_service_conflict_when_has_order_items(async_client, db_session):
+    service = Service(
+        slug="delete-service-blocked",
+        name="Delete Service Blocked",
+        category="repair",
+        is_active=True,
+        base_price=100,
+        calculator_schema={"fields": []},
+    )
+    client = Client(name="Delete Client", phone="79990001122")
+    order = Order(
+        order_no="JX-DELETE-1",
+        client=client,
+        status="Новый",
+        total_amount=100,
+        currency="RUB",
+    )
+    db_session.add_all([service, client, order])
+    await db_session.flush()
+    db_session.add(
+        OrderItem(
+            order_id=order.id,
+            service_id=service.id,
+            title="Linked item",
+            quantity=1,
+            unit_price=100,
+            line_total=100,
+        )
+    )
+    await db_session.commit()
+
+    response = await async_client.delete(f"/api/v1/catalog/services/{service.id}")
+    assert response.status_code == 409
+    assert response.json()["detail"] == "service_has_orders"
+
+    existing_service = (await db_session.execute(select(Service).where(Service.id == service.id))).scalar_one_or_none()
+    assert existing_service is not None
 
 
 async def test_orders_create_endpoint_smoke_from_calculator_payload(async_client, db_session):

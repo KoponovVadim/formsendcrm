@@ -121,6 +121,11 @@
                 {% endif %}
                 {% if can_manage_logistics_menu %}
                 <li>
+                    <a href="/admin/orders" class="nav-link text-white {% if '/admin/orders' in request.url.path %}active{% endif %}">
+                        <i class="bi bi-box-seam me-2"></i>Заказы
+                    </a>
+                </li>
+                <li>
                     <a href="/admin/logistics" class="nav-link text-white {% if '/admin/logistics' in request.url.path %}active{% endif %}">
                         <i class="bi bi-truck me-2"></i>Логистика
                     </a>

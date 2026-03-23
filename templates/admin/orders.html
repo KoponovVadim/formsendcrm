@@ -1,0 +1,80 @@
+{% extends "layout.html" %}
+{% block title %}Заказы{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-box-seam me-2"></i>Управление заказами</h4>
+</div>
+
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+        <form method="get" action="/admin/orders" class="row g-2 align-items-end">
+            <div class="col-12 col-md-5">
+                <label class="form-label mb-1">Поиск</label>
+                <input type="text" name="q" class="form-control" value="{{ query }}" placeholder="№ заказа, комментарий, статус">
+            </div>
+            <div class="col-12 col-md-4">
+                <label class="form-label mb-1">Статус</label>
+                <select name="status_filter" class="form-select">
+                    <option value="">Все</option>
+                    {% for status in statuses %}
+                    <option value="{{ status }}" {% if status_filter == status %}selected{% endif %}>{{ status }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-md-3 d-grid">
+                <button type="submit" class="btn btn-outline-primary">Применить</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table mb-0 table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>№ заказа</th>
+                        <th>Клиент</th>
+                        <th>Точка</th>
+                        <th>Статус</th>
+                        <th>Сумма</th>
+                        <th>Создан</th>
+                        <th class="text-end">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for order in orders %}
+                    <tr>
+                        <td>{{ order.id }}</td>
+                        <td><strong>{{ order.order_no }}</strong></td>
+                        <td>
+                            {% if order.client %}
+                            {{ order.client.name }}<br>
+                            <small class="text-muted">{{ order.client.phone }}</small>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ order.location.name if order.location else '—' }}</td>
+                        <td>{{ order.status }}</td>
+                        <td>{{ order.total_amount }} {{ order.currency }}</td>
+                        <td class="small text-muted">{{ order.created_at }}</td>
+                        <td class="text-end">
+                            <form method="post" action="/admin/orders/{{ order.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить заказ {{ order.order_no }}? Это действие необратимо.')">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="8" class="text-muted">Заказы не найдены.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

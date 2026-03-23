@@ -12,6 +12,12 @@
 <div class="alert alert-danger py-2">Пользователь с таким email уже существует.</div>
 {% elif request.query_params.get('created') == '1' %}
 <div class="alert alert-success py-2">Пользователь создан. Передайте логин и пароль вручную.</div>
+{% elif request.query_params.get('deleted') == '1' %}
+<div class="alert alert-success py-2">Пользователь удален.</div>
+{% elif request.query_params.get('delete_error') == 'self' %}
+<div class="alert alert-danger py-2">Нельзя удалить текущего пользователя.</div>
+{% elif request.query_params.get('delete_error') == 'last_superuser' %}
+<div class="alert alert-danger py-2">Нельзя удалить последнего суперпользователя.</div>
 {% endif %}
 
 <div class="card border-0 shadow-sm mb-3">
@@ -143,6 +149,11 @@
                                     <i class="bi bi-person-check"></i>
                                 </button>
                                 {% endif %}
+                            </form>
+                            <form method="POST" action="/admin/users/{{ u.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить пользователя {{ u.email }}?')">
+                                <button class="btn btn-sm btn-outline-danger" {% if u.id == user.id %}disabled title="Нельзя удалить текущего пользователя"{% endif %}>
+                                    <i class="bi bi-trash"></i>
+                                </button>
                             </form>
                         </td>
                     </tr>

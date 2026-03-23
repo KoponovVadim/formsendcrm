@@ -110,6 +110,9 @@
                         <button type="submit" class="btn btn-primary" id="service-save">
                             <i class="bi bi-save me-1"></i>Сохранить
                         </button>
+                        <button type="button" class="btn btn-outline-danger" id="service-delete" disabled>
+                            <i class="bi bi-trash me-1"></i>Удалить
+                        </button>
                     </div>
                 </form>
                 <div id="service-editor-status" class="small text-muted mt-2"></div>
@@ -170,6 +173,7 @@
     const reloadBtn = document.getElementById('services-reload');
     const newBtn = document.getElementById('service-new');
     const form = document.getElementById('service-editor-form');
+    const deleteBtn = document.getElementById('service-delete');
     const priceCategoryFilter = document.getElementById('price-category-filter');
     const pointPricesReloadBtn = document.getElementById('point-prices-reload');
     const pointPricesTable = document.getElementById('point-prices-table');
@@ -396,6 +400,7 @@
             input.checked = true;
         });
         editorTitle.textContent = 'Новая услуга';
+        deleteBtn.disabled = true;
         setEditorStatus('', false);
     }
 
@@ -412,7 +417,49 @@
         renderFieldsBuilder(Array.isArray(schema.fields) ? schema.fields : []);
         renderPointsAvailability(Array.isArray(service.enabled_points) ? service.enabled_points : []);
         editorTitle.textContent = `Редактирование #${service.id}`;
+        deleteBtn.disabled = Number(service.id || 0) <= 0;
         setEditorStatus('', false);
+    }
+
+    async function deleteService() {
+        const id = Number(idInput.value || 0);
+        if (id <= 0) {
+            setEditorStatus('Сначала выберите услугу для удаления.', true);
+            return;
+        }
+
+        const name = String(nameInput.value || '').trim() || `#${id}`;
+        if (!window.confirm(`Удалить услугу ${name}?`)) {
+            return;
+        }
+
+        deleteBtn.disabled = true;
+        setEditorStatus('Удаляем услугу...', false);
+
+        try {
+            const response = await fetch(`/api/v1/catalog/services/${id}`, {
+                method: 'DELETE',
+            });
+            if (!response.ok) {
+                const data = await response.json().catch(function () { return {}; });
+                throw new Error(data.detail || 'delete_failed');
+            }
+
+            resetForm();
+            await loadServices();
+            await loadPriceMatrix();
+            setEditorStatus('Услуга удалена.', false);
+        } catch (err) {
+            if (String(err.message || '') === 'service_has_orders') {
+                setEditorStatus('Нельзя удалить услугу: есть связанные заказы.', true);
+            } else {
+                setEditorStatus(`Не удалось удалить: ${String(err.message || err)}`, true);
+            }
+        } finally {
+            if (Number(idInput.value || 0) > 0) {
+                deleteBtn.disabled = false;
+            }
+        }
     }
 
     function renderRows() {
@@ -746,6 +793,7 @@
     reloadBtn.addEventListener('click', loadServices);
     newBtn.addEventListener('click', resetForm);
     form.addEventListener('submit', saveService);
+    deleteBtn.addEventListener('click', deleteService);
 
     fieldAddBtn.addEventListener('click', function () {
         const rows = collectFieldsFromBuilder();

@@ -12,7 +12,7 @@ from app.models import DynamicRecord, ModuleConfig, Role, User
 from app.routes_admin import router as admin_router
 from app.routes_auth import router as auth_router
 from app.routes_modules import router as modules_router
-from models.crm import Executor, Location, Task
+from models.crm import Client, Executor, Location, LogisticsDelivery, Order, Task
 
 
 @pytest.mark.asyncio
@@ -275,6 +275,134 @@ async def test_admin_can_update_and_delete_location_and_executor(db_session: Any
 
     updated_location = (await db_session.execute(select(Location).where(Location.name == "Renamed Point"))).scalar_one_or_none()
     assert updated_location is None
+
+
+@pytest.mark.asyncio
+async def test_admin_orders_page_and_delete_order(db_session: Any):
+    app = FastAPI()
+    app.include_router(admin_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    client = Client(name="Order Admin Client", phone="79998887766")
+    point = Location(name="Order Admin Point", is_active=True)
+    db_session.add_all([client, point])
+    await db_session.flush()
+
+    order = Order(
+        order_no="JX-ADMIN-ORDER-1",
+        client_id=client.id,
+        location_id=point.id,
+        status="Новый",
+        total_amount=500,
+        currency="RUB",
+    )
+    db_session.add(order)
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client_http:
+        page_response = await client_http.get("/admin/orders")
+        assert page_response.status_code == 200
+        assert "JX-ADMIN-ORDER-1" in page_response.text
+
+        delete_response = await client_http.post(f"/admin/orders/{order.id}/delete")
+
+    assert delete_response.status_code == 302
+    assert delete_response.headers.get("location") == "/admin/orders"
+
+    deleted = (await db_session.execute(select(Order).where(Order.id == order.id))).scalar_one_or_none()
+    assert deleted is None
+
+
+@pytest.mark.asyncio
+async def test_admin_user_delete_guards_and_cleanup_relations(db_session: Any):
+    app = FastAPI()
+    app.include_router(admin_router)
+
+    current_user_state = {"id": 0}
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=current_user_state["id"], is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    self_user = User(email="self-delete@test.local", password_hash="x", is_active=True, is_superuser=True)
+    db_session.add(self_user)
+    await db_session.commit()
+    current_user_state["id"] = int(self_user.id)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client_http:
+        self_delete_response = await client_http.post(f"/admin/users/{self_user.id}/delete")
+    assert self_delete_response.status_code == 302
+    assert self_delete_response.headers.get("location") == "/admin/users?delete_error=self"
+
+    self_after = (await db_session.execute(select(User).where(User.id == self_user.id))).scalar_one_or_none()
+    assert self_after is not None
+
+    lone_superuser = User(email="last-super@test.local", password_hash="x", is_active=True, is_superuser=True)
+    db_session.add(lone_superuser)
+    await db_session.commit()
+
+    await db_session.delete(self_user)
+    await db_session.commit()
+    current_user_state["id"] = 999999
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client_http:
+        last_super_response = await client_http.post(f"/admin/users/{lone_superuser.id}/delete")
+    assert last_super_response.status_code == 302
+    assert last_super_response.headers.get("location") == "/admin/users?delete_error=last_superuser"
+
+    survivor = (await db_session.execute(select(User).where(User.id == lone_superuser.id))).scalar_one_or_none()
+    assert survivor is not None
+
+    manager = User(email="manager-delete@test.local", password_hash="x", is_active=True, is_superuser=False)
+    point = Location(name="Delete User Point", is_active=True)
+    client_entity = Client(name="Delete User Client", phone="70000000000")
+    db_session.add_all([manager, point, client_entity])
+    await db_session.flush()
+
+    order = Order(
+        order_no="JX-ADMIN-USER-DEL-1",
+        client_id=client_entity.id,
+        location_id=point.id,
+        status="Новый",
+        total_amount=100,
+        currency="RUB",
+    )
+    db_session.add(order)
+    await db_session.flush()
+
+    executor = Executor(name="Delete Linked Executor", is_active=True, user_id=manager.id, location_id=point.id, current_active_tasks=0, max_active_tasks=5)
+    delivery = LogisticsDelivery(order_id=order.id, courier_user_id=manager.id, status="created")
+    db_session.add_all([executor, delivery])
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client_http:
+        success_response = await client_http.post(f"/admin/users/{manager.id}/delete")
+    assert success_response.status_code == 302
+    assert success_response.headers.get("location") == "/admin/users?deleted=1"
+
+    deleted_manager = (await db_session.execute(select(User).where(User.id == manager.id))).scalar_one_or_none()
+    assert deleted_manager is None
+
+    updated_executor = (await db_session.execute(select(Executor).where(Executor.id == executor.id))).scalar_one_or_none()
+    assert updated_executor is not None
+    assert updated_executor.user_id is None
+
+    updated_delivery = (await db_session.execute(select(LogisticsDelivery).where(LogisticsDelivery.id == delivery.id))).scalar_one_or_none()
+    assert updated_delivery is not None
+    assert updated_delivery.courier_user_id is None
 
 
 @pytest.mark.asyncio

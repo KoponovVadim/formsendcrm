@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import can_manage_services, get_current_user, get_services_access_scope
 from app.database import get_db
-from models.crm import Location, LocationPrice, Service
+from models.crm import Location, LocationPrice, OrderItem, Service
 from repositories.crm_repository import CRMRepository
 from services.pricing_service import as_float, calculate_total_with_breakdown
 
@@ -609,6 +609,31 @@ async def update_service(service_id: int, payload: dict, db: AsyncSession = Depe
         "calculator_schema": service.calculator_schema or {},
         "enabled_points": enabled_point_names,
     }
+
+
+@router.delete("/services/{service_id}")
+async def delete_service(service_id: int, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    if not can_manage_services(user):
+        raise HTTPException(403, "services_manage_access_denied")
+
+    service = (await db.execute(select(Service).where(Service.id == service_id))).scalar_one_or_none()
+    if not service:
+        raise HTTPException(404, "service_not_found")
+
+    linked_items_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(OrderItem)
+            .where(OrderItem.service_id == int(service.id))
+        )
+    ).scalar() or 0
+    if int(linked_items_count) > 0:
+        raise HTTPException(409, "service_has_orders")
+
+    await db.execute(delete(LocationPrice).where(LocationPrice.service_id == int(service.id)))
+    await db.delete(service)
+    await db.commit()
+    return {"ok": True}
 
 
 @router.post("/services/{service_id}/calculate")

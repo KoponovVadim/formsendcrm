@@ -6,12 +6,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 import json
 import re
 
 from app.database import get_db
 from app.models import User, Role, ModuleConfig, SyncLog, DynamicRecord
 from app.auth import (
+    can_manage_logistics,
     can_manage_services,
     get_current_user,
     require_superuser,
@@ -20,7 +22,7 @@ from app.auth import (
 )
 from app.schema_loader import get_all_modules
 from app import sync_service
-from models.crm import Executor, Location, LocationPrice, Order, Service, Task
+from models.crm import Executor, Location, LocationPrice, LogisticsDelivery, Order, Service, Task
 from repositories.crm_repository import CRMRepository
 
 router = APIRouter(prefix="/admin")
@@ -173,6 +175,14 @@ def _require_services_manager(user):
         return
     if not can_manage_services(user):
         raise HTTPException(status_code=403, detail="services_manage_access_denied")
+
+
+def _require_orders_manager(user):
+    if user.is_superuser:
+        return
+    if can_manage_logistics(user) or can_manage_services(user):
+        return
+    raise HTTPException(status_code=403, detail="orders_manage_access_denied")
 
 
 def _safe_admin_redirect_path(value: str, default: str = "/admin/locations") -> str:
@@ -349,6 +359,73 @@ async def admin_locations(
         "services": services,
         "price_map": price_map,
     })
+
+
+@router.get("/orders", response_class=HTMLResponse)
+async def admin_orders(
+    request: Request,
+    q: str = "",
+    status_filter: str = "",
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_orders_manager(user)
+    modules = await get_all_modules(db)
+
+    stmt = (
+        select(Order)
+        .options(selectinload(Order.client), selectinload(Order.location))
+        .order_by(Order.created_at.desc())
+    )
+
+    normalized_query = str(q or "").strip()
+    if normalized_query:
+        like = f"%{normalized_query}%"
+        stmt = stmt.where(
+            (Order.order_no.ilike(like))
+            | (Order.comment.ilike(like))
+            | (Order.status.ilike(like))
+        )
+
+    normalized_status = str(status_filter or "").strip()
+    if normalized_status:
+        stmt = stmt.where(Order.status == normalized_status)
+
+    orders = list((await db.execute(stmt.limit(300))).scalars().all())
+    statuses = list(
+        (
+            await db.execute(select(Order.status).distinct().order_by(Order.status.asc()))
+        ).scalars().all()
+    )
+
+    return templates.TemplateResponse(
+        "admin/orders.html",
+        {
+            "request": request,
+            "user": user,
+            "modules": modules,
+            "orders": orders,
+            "query": normalized_query,
+            "status_filter": normalized_status,
+            "statuses": [s for s in statuses if str(s or "").strip()],
+        },
+    )
+
+
+@router.post("/orders/{order_id}/delete")
+async def admin_order_delete(
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_orders_manager(user)
+    order = (await db.execute(select(Order).where(Order.id == order_id))).scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="order_not_found")
+
+    await db.delete(order)
+    await db.commit()
+    return RedirectResponse("/admin/orders", status_code=302)
 
 
 @router.get("/executors", response_class=HTMLResponse)
@@ -920,6 +997,45 @@ async def user_update(
     target.is_superuser = form.get("is_superuser") == "on"
     await db.commit()
     return RedirectResponse("/admin/users", status_code=302)
+
+
+@router.post("/users/{user_id}/delete")
+async def user_delete(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_admin(user)
+
+    target = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="user_not_found")
+
+    if int(target.id) == int(user.id):
+        return RedirectResponse("/admin/users?delete_error=self", status_code=302)
+
+    if bool(target.is_superuser):
+        superusers_count = (
+            await db.execute(select(func.count()).select_from(User).where(User.is_superuser == True))
+        ).scalar() or 0
+        if int(superusers_count) <= 1:
+            return RedirectResponse("/admin/users?delete_error=last_superuser", status_code=302)
+
+    executors = (
+        await db.execute(select(Executor).where(Executor.user_id == int(target.id)))
+    ).scalars().all()
+    for executor in executors:
+        executor.user_id = None
+
+    deliveries = (
+        await db.execute(select(LogisticsDelivery).where(LogisticsDelivery.courier_user_id == int(target.id)))
+    ).scalars().all()
+    for delivery in deliveries:
+        delivery.courier_user_id = None
+
+    await db.delete(target)
+    await db.commit()
+    return RedirectResponse("/admin/users?deleted=1", status_code=302)
 
 
 # ─── MODULES CONFIG ─────────────────────────────────────
