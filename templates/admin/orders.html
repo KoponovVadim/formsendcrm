@@ -47,24 +47,21 @@
                 <tbody>
                     {% for order in orders %}
                     <tr>
-                        <td>{{ order.id }}</td>
+                        <td>{{ order.order_id if order.order_id else order.dynamic_id }}</td>
                         <td><strong>{{ order.order_no }}</strong></td>
-                        <td>
-                            {% if order.client %}
-                            {{ order.client.name }}<br>
-                            <small class="text-muted">{{ order.client.phone }}</small>
-                            {% else %}
-                            <span class="text-muted">—</span>
-                            {% endif %}
-                        </td>
-                        <td>{{ order.location.name if order.location else '—' }}</td>
+                        <td>{{ order.client or '—' }}</td>
+                        <td>{{ order.point or '—' }}</td>
                         <td>{{ order.status }}</td>
-                        <td>{{ order.total_amount }} {{ order.currency }}</td>
-                        <td class="small text-muted">{{ order.created_at }}</td>
+                        <td>—</td>
+                        <td class="small text-muted">{{ order.updated_at }}</td>
                         <td class="text-end">
-                            <form method="post" action="/admin/orders/{{ order.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить заказ {{ order.order_no }}? Это действие необратимо.')">
+                            {% if order.order_id %}
+                            <form method="post" action="/admin/orders/{{ order.order_id }}/delete" class="d-inline" onsubmit="return confirm('Удалить заказ {{ order.order_no }}? Это действие необратимо.')">
                                 <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
                             </form>
+                            {% else %}
+                            <span class="text-muted small">SQL-идентификатор не найден</span>
+                            {% endif %}
                         </td>
                     </tr>
                     {% else %}

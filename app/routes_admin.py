@@ -373,32 +373,93 @@ async def admin_orders(
 ):
     _require_orders_manager(user)
     modules = await get_all_modules(db)
+    orders_module = next((m for m in modules if m.slug == "orders"), None)
 
-    stmt = (
-        select(Order)
-        .options(selectinload(Order.client), selectinload(Order.location))
-        .order_by(Order.created_at.desc())
-    )
-
-    normalized_query = str(q or "").strip()
-    if normalized_query:
-        like = f"%{normalized_query}%"
-        stmt = stmt.where(
-            (Order.order_no.ilike(like))
-            | (Order.comment.ilike(like))
-            | (Order.status.ilike(like))
+    if not orders_module:
+        return templates.TemplateResponse(
+            "admin/orders.html",
+            {
+                "request": request,
+                "user": user,
+                "modules": modules,
+                "orders": [],
+                "query": str(q or "").strip(),
+                "status_filter": str(status_filter or "").strip(),
+                "statuses": [],
+            },
         )
 
-    normalized_status = str(status_filter or "").strip()
-    if normalized_status:
-        stmt = stmt.where(Order.status == normalized_status)
+    field_names = [f.get("name", "") for f in (orders_module.fields_schema or []) if isinstance(f, dict)]
 
-    orders = list((await db.execute(stmt.limit(300))).scalars().all())
-    statuses = list(
-        (
-            await db.execute(select(Order.status).distinct().order_by(Order.status.asc()))
-        ).scalars().all()
-    )
+    def _find_field(candidates: list[str]) -> str:
+        lowered_map = {str(name).strip().lower(): name for name in field_names if str(name).strip()}
+        for candidate in candidates:
+            key = str(candidate).strip().lower()
+            if key in lowered_map:
+                return lowered_map[key]
+        for name in field_names:
+            lowered = str(name).strip().lower()
+            if any(str(candidate).strip().lower() in lowered for candidate in candidates):
+                return name
+        return ""
+
+    order_no_field = _find_field(["№ заказа", "номер заказа", "order_no", "номер"])
+    status_field = _find_field(["Статус", "status"])
+    client_field = _find_field(["Клиент", "фио", "client"])
+    point_field = _find_field(["Точка", "Локация", "point", "location"])
+
+    normalized_query = str(q or "").strip().lower()
+    normalized_status = str(status_filter or "").strip().lower()
+
+    records = (
+        await db.execute(
+            select(DynamicRecord)
+            .where(DynamicRecord.module_slug == "orders")
+            .order_by(DynamicRecord.row_index.desc())
+            .limit(1000)
+        )
+    ).scalars().all()
+
+    sql_orders = (await db.execute(select(Order))).scalars().all()
+    sql_by_order_no = {str(o.order_no or "").strip(): o for o in sql_orders}
+
+    rows = []
+    statuses_set = set()
+    for record in records:
+        data = dict(record.data or {})
+        order_no = str(data.get(order_no_field, "") or "").strip()
+        status_value = str(data.get(status_field, "") or "").strip()
+        statuses_set.add(status_value)
+
+        if normalized_query:
+            search_text = " ".join(
+                [
+                    order_no,
+                    status_value,
+                    str(data.get(client_field, "") or ""),
+                    str(data.get(point_field, "") or ""),
+                ]
+            ).lower()
+            if normalized_query not in search_text:
+                continue
+
+        if normalized_status and normalized_status != status_value.lower():
+            continue
+
+        linked_sql = sql_by_order_no.get(order_no)
+        rows.append(
+            {
+                "dynamic_id": int(record.id),
+                "order_id": int(linked_sql.id) if linked_sql else None,
+                "order_no": order_no or f"#{record.row_index}",
+                "client": str(data.get(client_field, "") or ""),
+                "point": str(data.get(point_field, "") or ""),
+                "status": status_value,
+                "updated_at": record.updated_at,
+            }
+        )
+
+    statuses = sorted([s for s in statuses_set if str(s or "").strip()])
 
     return templates.TemplateResponse(
         "admin/orders.html",
@@ -406,10 +467,10 @@ async def admin_orders(
             "request": request,
             "user": user,
             "modules": modules,
-            "orders": orders,
-            "query": normalized_query,
-            "status_filter": normalized_status,
-            "statuses": [s for s in statuses if str(s or "").strip()],
+            "orders": rows,
+            "query": str(q or "").strip(),
+            "status_filter": str(status_filter or "").strip(),
+            "statuses": statuses,
         },
     )
 

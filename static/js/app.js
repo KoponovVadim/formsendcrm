@@ -615,6 +615,200 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
+    async function saveInlineField(slug, recordId, field, value) {
+        const formData = new FormData();
+        formData.append('field', field);
+        formData.append('value', value == null ? '' : String(value));
+
+        const response = await fetch(`/modules/${slug}/record/${recordId}/field`, {
+            method: 'POST',
+            body: formData,
+            headers: { 'HX-Request': 'true' }
+        });
+
+        if (!response.ok) {
+            const text = await response.text().catch(function () { return ''; });
+            throw new Error(text || 'inline_field_save_failed');
+        }
+
+        return response.json().catch(function () { return { ok: true }; });
+    }
+
+    function initOrderAssignmentControls(root) {
+        const panel = root.querySelector('.drawer-edit-form') || document.querySelector('.drawer-edit-form');
+        if (!panel) return;
+
+        const pointSelect = panel.querySelector('select[name="__point_id__"]');
+        const masterSelect = panel.querySelector('select[name="__master_id__"]');
+        if (!pointSelect || !masterSelect) return;
+
+        function applyMasterFilter() {
+            const pointId = String(pointSelect.value || '');
+            Array.from(masterSelect.options).forEach(function (option) {
+                if (!option.value) {
+                    option.hidden = false;
+                    return;
+                }
+                const locationId = String(option.dataset.locationId || '');
+                option.hidden = !!pointId && !!locationId && locationId !== pointId;
+            });
+
+            const selected = masterSelect.selectedOptions && masterSelect.selectedOptions[0];
+            if (selected && selected.hidden) {
+                masterSelect.value = '';
+            }
+        }
+
+        applyMasterFilter();
+
+        if (!panel.dataset.assignmentBound) {
+            panel.addEventListener('change', async function (event) {
+                const select = event.target.closest('.js-order-assignment-select');
+                if (!select) return;
+
+                const slug = select.dataset.slug;
+                const recordId = select.dataset.recordId;
+                const field = select.dataset.field;
+                const previousValue = select.dataset.previousValue || '';
+
+                if (field === '__point_id__') {
+                    applyMasterFilter();
+                }
+
+                try {
+                    await saveInlineField(slug, recordId, field, select.value || '');
+                    select.dataset.previousValue = String(select.value || '');
+                    if (field === '__point_id__') {
+                        const master = panel.querySelector('select[name="__master_id__"]');
+                        if (master && !master.value) {
+                            master.dataset.previousValue = '';
+                        }
+                    }
+                    if (slug) refreshRecordsContainer(slug);
+                } catch (_err) {
+                    select.value = previousValue;
+                    if (field === '__point_id__') {
+                        applyMasterFilter();
+                    }
+                    alert('Не удалось сохранить назначение точки/мастера.');
+                }
+            });
+            panel.dataset.assignmentBound = '1';
+        }
+
+        [pointSelect, masterSelect].forEach(function (select) {
+            if (select && !select.dataset.previousValue) {
+                select.dataset.previousValue = String(select.value || '');
+            }
+        });
+    }
+
+    function initKanbanDnd(root) {
+        const kanban = root.querySelector('.kanban-grid') || document.querySelector('.kanban-grid');
+        if (!kanban || kanban.dataset.dndBound === '1') return;
+
+        let draggedCard = null;
+        let dragSourceStatus = '';
+        let touchCard = null;
+        let activeTouchDropzone = null;
+
+        function clearDropHighlights() {
+            kanban.querySelectorAll('.js-kanban-dropzone').forEach(function (zone) {
+                zone.classList.remove('is-drop-target');
+            });
+            activeTouchDropzone = null;
+        }
+
+        async function moveCard(card, targetStatus) {
+            if (!card || !targetStatus) return;
+            const slug = card.dataset.slug || 'orders';
+            const recordId = card.dataset.recordId;
+            const currentStatus = card.dataset.repairStatus || '';
+            if (!recordId || !slug || currentStatus === targetStatus) return;
+
+            try {
+                await saveInlineField(slug, recordId, '__repair_status__', targetStatus);
+                refreshRecordsContainer(slug);
+            } catch (_err) {
+                alert('Некорректный переход статуса или ошибка сохранения.');
+                refreshRecordsContainer(slug);
+            }
+        }
+
+        kanban.addEventListener('dragstart', function (event) {
+            const card = event.target.closest('.js-kanban-card');
+            if (!card) return;
+            draggedCard = card;
+            dragSourceStatus = card.dataset.repairStatus || '';
+            card.classList.add('is-dragging');
+            if (event.dataTransfer) {
+                event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer.setData('text/plain', card.dataset.recordId || '');
+            }
+        });
+
+        kanban.addEventListener('dragend', function () {
+            if (draggedCard) draggedCard.classList.remove('is-dragging');
+            draggedCard = null;
+            dragSourceStatus = '';
+            clearDropHighlights();
+        });
+
+        kanban.addEventListener('dragover', function (event) {
+            const zone = event.target.closest('.js-kanban-dropzone');
+            if (!zone || !draggedCard) return;
+            event.preventDefault();
+            clearDropHighlights();
+            zone.classList.add('is-drop-target');
+        });
+
+        kanban.addEventListener('drop', function (event) {
+            const zone = event.target.closest('.js-kanban-dropzone');
+            if (!zone || !draggedCard) return;
+            event.preventDefault();
+            const targetStatus = zone.dataset.repairStatus || '';
+            const card = draggedCard;
+            draggedCard = null;
+            clearDropHighlights();
+            moveCard(card, targetStatus);
+        });
+
+        kanban.addEventListener('touchstart', function (event) {
+            const card = event.target.closest('.js-kanban-card');
+            if (!card) return;
+            touchCard = card;
+            card.classList.add('is-touch-dragging');
+        }, { passive: true });
+
+        kanban.addEventListener('touchmove', function (event) {
+            if (!touchCard || !event.touches || !event.touches[0]) return;
+            const touch = event.touches[0];
+            const target = document.elementFromPoint(touch.clientX, touch.clientY);
+            const zone = target ? target.closest('.js-kanban-dropzone') : null;
+            clearDropHighlights();
+            if (zone) {
+                zone.classList.add('is-drop-target');
+                activeTouchDropzone = zone;
+            }
+            event.preventDefault();
+        }, { passive: false });
+
+        kanban.addEventListener('touchend', function () {
+            if (!touchCard) return;
+            const card = touchCard;
+            card.classList.remove('is-touch-dragging');
+            const zone = activeTouchDropzone;
+            touchCard = null;
+            clearDropHighlights();
+            if (zone) {
+                const targetStatus = zone.dataset.repairStatus || '';
+                moveCard(card, targetStatus);
+            }
+        });
+
+        kanban.dataset.dndBound = '1';
+    }
+
     function initStatusSelects(root) {
         root.querySelectorAll('.js-status-select').forEach(function (selectEl) {
             if (!selectEl.dataset.previousValue) {
@@ -716,6 +910,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
     initStatusSelects(document);
     initOrdersBulkStatus(document);
+    initOrderAssignmentControls(document);
+    initKanbanDnd(document);
 
     // Re-init Bootstrap modal after HTMX swap
     document.body.addEventListener('htmx:afterSwap', function (event) {
@@ -734,11 +930,13 @@ document.addEventListener('DOMContentLoaded', function () {
                 const drawer = bootstrap.Offcanvas.getOrCreateInstance(drawerEl);
                 drawer.show();
             }
+            initOrderAssignmentControls(event.detail.target);
         }
 
         if (event.detail.target.id === 'records-container') {
             initStatusSelects(event.detail.target);
             initOrdersBulkStatus(event.detail.target);
+            initKanbanDnd(event.detail.target);
         }
     });
 

@@ -16,6 +16,7 @@ from app.auth import (
     get_visible_fields, get_editable_fields, filter_visible_modules_for_user, get_user_specializations,
 )
 from app.schema_loader import get_all_modules, get_module_by_slug
+from models.crm import Executor, Location
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
@@ -59,7 +60,13 @@ COMPLETED_STATUS_KEYS = {
     "closed",
 }
 
-REPAIR_STATUS_OPTIONS = ["new", "in_progress", "ready", "done"]
+REPAIR_STATUS_OPTIONS = [
+    "Ожидает доставки в ремонт",
+    "В ремонте",
+    "Готов",
+    "Выдан",
+    "Отменён",
+]
 LOGISTICS_STATUS_OPTIONS = [
     "pending_pickup",
     "in_transit_to_service",
@@ -69,33 +76,82 @@ LOGISTICS_STATUS_OPTIONS = [
 ]
 
 REPAIR_STATUS_LABELS = {
-    "new": "Новый",
-    "in_progress": "В ремонте",
-    "ready": "Готов",
-    "done": "Выдан",
+    "Ожидает доставки в ремонт": "Ожидает доставки в ремонт",
+    "В ремонте": "В ремонте",
+    "Готов": "Готов",
+    "Выдан": "Выдан",
+    "Отменён": "Отменён",
+}
+
+LOGISTICS_STATUS_LABELS = {
+    "pending_pickup": "Ожидает забора",
+    "in_transit_to_service": "В пути в сервис",
+    "at_service": "В сервисе",
+    "in_transit_back": "В пути обратно",
+    "delivered": "Доставлен",
+}
+
+REPAIR_STATUS_TRANSITIONS = {
+    "Ожидает доставки в ремонт": {"В ремонте", "Отменён"},
+    "В ремонте": {"Готов", "Отменён"},
+    "Готов": {"Выдан", "В ремонте", "Отменён"},
+    "Выдан": set(),
+    "Отменён": set(),
 }
 
 
+def _normalize_repair_status(value: str) -> str:
+    key = _status_key(value)
+    mapping = {
+        "ожидает доставки в ремонт": "Ожидает доставки в ремонт",
+        "новый": "Ожидает доставки в ремонт",
+        "new": "Ожидает доставки в ремонт",
+        "в ремонте": "В ремонте",
+        "в работе": "В ремонте",
+        "in_progress": "В ремонте",
+        "готов": "Готов",
+        "ready": "Готов",
+        "ожидает выдачи": "Готов",
+        "едет на выдачу": "Готов",
+        "выдан": "Выдан",
+        "done": "Выдан",
+        "отменен": "Отменён",
+        "отменён": "Отменён",
+        "cancelled": "Отменён",
+        "canceled": "Отменён",
+    }
+    return mapping.get(key, "Ожидает доставки в ремонт")
+
+
+def _extract_user_point_id(user) -> int | None:
+    raw = str(getattr(user, "specialization", "") or "")
+    match = re.search(r"(?:point_id|point|location)\s*[:=]\s*(\d+)", raw, re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        value = int(match.group(1))
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _get_order_point_and_master_fields(all_fields: list[str]) -> tuple[str | None, str | None]:
+    point_field = _find_field_name_by_candidates(all_fields, ["Точка", "Локация", "Филиал", "Point", "Location"])
+    master_field = _find_field_name_by_candidates(all_fields, ["Мастер", "Исполнитель", "Executor", "Master"])
+    return point_field, master_field
+
+
 def _display_status_to_repair_status(display_status: str) -> str:
-    key = _status_key(display_status)
-    if key in {"новый"}:
-        return "new"
-    if key in {"в ремонте", "в работе", "ожидает доставки в ремонт", "едет в точку ремонта", "приехал в точку ремонта"}:
-        return "in_progress"
-    if key in {"готов", "ожидает выдачи", "едет на выдачу"}:
-        return "ready"
-    if key in {"выдан", "завершен", "закрыт"}:
-        return "done"
-    return "new"
+    return _normalize_repair_status(display_status)
 
 
 def _derive_repair_status(order_data: dict, status_field: str | None) -> str:
-    raw_repair = str(order_data.get("__repair_status__", "")).strip().lower()
-    if raw_repair in REPAIR_STATUS_OPTIONS:
-        return raw_repair
+    raw_repair = str(order_data.get("__repair_status__", "")).strip()
+    if raw_repair:
+        return _normalize_repair_status(raw_repair)
     if status_field:
         return _display_status_to_repair_status(str(order_data.get(status_field, "")))
-    return "new"
+    return "Ожидает доставки в ремонт"
 
 
 def _derive_logistics_status(order_data: dict) -> str:
@@ -109,25 +165,7 @@ def _derive_display_status_for_order(order_data: dict, status_field: str | None)
     if not status_field:
         return ""
     repair_status = _derive_repair_status(order_data, status_field)
-    logistics_status = _derive_logistics_status(order_data)
-
-    if repair_status == "done":
-        return "Выдан"
-    if repair_status == "ready":
-        if logistics_status == "in_transit_back":
-            return "Едет на выдачу"
-        if logistics_status == "delivered":
-            return "Выдан"
-        return "Готов"
-    if repair_status == "in_progress":
-        if logistics_status == "pending_pickup":
-            return "Ожидает доставки в ремонт"
-        if logistics_status == "in_transit_to_service":
-            return "Едет в точку ремонта"
-        if logistics_status == "at_service":
-            return "В ремонте"
-        return "В ремонте"
-    return "Новый"
+    return repair_status
 
 
 def _apply_order_status_automation(order_data: dict, status_field: str | None) -> dict:
@@ -135,17 +173,23 @@ def _apply_order_status_automation(order_data: dict, status_field: str | None) -
     repair_status = _derive_repair_status(data, status_field)
     logistics_status = _derive_logistics_status(data)
 
-    # Rule 1: at_service => in_progress
+    # Rule 1: logistics at_service => repair in_progress
     if logistics_status == "at_service":
-        repair_status = "in_progress"
-    # Rule 2: ready => in_transit_back
-    if repair_status == "ready":
+        repair_status = "В ремонте"
+    # Rule 2: repair ready => logistics in_transit_back
+    if repair_status == "Готов":
         logistics_status = "in_transit_back"
-    # Rule 3: delivered => done
+    # Rule 3: logistics delivered => repair done
     if logistics_status == "delivered":
-        repair_status = "done"
+        repair_status = "Выдан"
 
-    data["__repair_status__"] = repair_status
+    # Additional reverse rules requested for drag/drop-driven repair transitions.
+    if repair_status == "В ремонте":
+        logistics_status = "at_service"
+    if repair_status == "Выдан":
+        logistics_status = "delivered"
+
+    data["__repair_status__"] = _normalize_repair_status(repair_status)
     data["__logistics_status__"] = logistics_status
     if status_field:
         data[status_field] = _derive_display_status_for_order(data, status_field)
@@ -540,6 +584,70 @@ async def _sync_order_dependencies(db: AsyncSession, order_data: dict) -> None:
             related_record.updated_at = now
 
 
+async def _validate_and_apply_order_assignment(
+    db: AsyncSession,
+    order_data: dict,
+    all_field_names: list[str],
+) -> dict:
+    data = dict(order_data or {})
+    point_field, master_field = _get_order_point_and_master_fields(all_field_names)
+
+    point_id_raw = str(data.get("__point_id__", "") or "").strip()
+    if not point_id_raw and point_field:
+        point_name = str(data.get(point_field, "") or "").strip().lower()
+        if point_name:
+            location = (
+                await db.execute(select(Location).where(func.lower(Location.name) == point_name))
+            ).scalar_one_or_none()
+            if location:
+                point_id_raw = str(int(location.id))
+
+    if not point_id_raw.isdigit() or int(point_id_raw) <= 0:
+        raise HTTPException(400, "Необходимо выбрать точку ремонта")
+
+    point_id = int(point_id_raw)
+    location = (
+        await db.execute(select(Location).where(Location.id == point_id, Location.is_active == True))
+    ).scalar_one_or_none()
+    if not location:
+        raise HTTPException(400, "Выбранная точка недоступна")
+
+    data["__point_id__"] = point_id
+    if point_field:
+        data[point_field] = str(location.name)
+
+    master_id_raw = str(data.get("__master_id__", "") or "").strip()
+    if not master_id_raw and master_field:
+        master_name = str(data.get(master_field, "") or "").strip().lower()
+        if master_name:
+            executor = (
+                await db.execute(select(Executor).where(func.lower(Executor.name) == master_name))
+            ).scalar_one_or_none()
+            if executor:
+                master_id_raw = str(int(executor.id))
+
+    if master_id_raw:
+        if not master_id_raw.isdigit() or int(master_id_raw) <= 0:
+            raise HTTPException(400, "Некорректный мастер")
+        master_id = int(master_id_raw)
+        executor = (
+            await db.execute(select(Executor).where(Executor.id == master_id, Executor.is_active == True))
+        ).scalar_one_or_none()
+        if not executor:
+            raise HTTPException(400, "Мастер не найден")
+        if not executor.location_id or int(executor.location_id) != point_id:
+            raise HTTPException(400, "Нельзя выбрать мастера из другой точки")
+        data["__master_id__"] = master_id
+        if master_field:
+            data[master_field] = str(executor.name or "")
+    else:
+        data["__master_id__"] = ""
+        if master_field:
+            data[master_field] = ""
+
+    return data
+
+
 @router.get("/modules/{slug}", response_class=HTMLResponse)
 async def module_list(
     request: Request,
@@ -547,7 +655,7 @@ async def module_list(
     page: int = 1,
     search: str = "",
     sort: str = "newest",
-    view: str = "table",
+    view: str = "kanban",
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -562,6 +670,7 @@ async def module_list(
     all_field_names = [f["name"] for f in module.fields_schema]
     status_field, status_options, status_colors = _extract_status_settings(module)
     specialization_field, _ = _extract_specialization_settings(module)
+    point_field, _ = _get_order_point_and_master_fields(all_field_names)
     user_specializations = get_user_specializations(user)
     visible_fields = get_visible_fields(permissions, slug, all_field_names, user.is_superuser)
     editable_fields = get_editable_fields(permissions, slug, all_field_names, user.is_superuser)
@@ -583,6 +692,12 @@ async def module_list(
         stmt = stmt.where(
             or_(*[partner_expr.like(f"%{spec}%") for spec in lowered_specializations])
         )
+
+    if slug == "orders" and not user.is_superuser:
+        user_point_id = _extract_user_point_id(user)
+        if user_point_id:
+            point_expr = func.coalesce(cast(DynamicRecord.data["__point_id__"], String), "")
+            stmt = stmt.where(point_expr == str(user_point_id))
 
     if sort not in SORT_OPTIONS:
         sort = "newest"
@@ -615,20 +730,18 @@ async def module_list(
     total_pages = max(1, (total + per_page - 1) // per_page)
     modules = await get_all_modules(db)
     modules = filter_visible_modules_for_user(modules, user)
-    view_mode = "kanban" if slug == "orders" and view == "kanban" else "table"
+    if slug == "orders":
+        view_mode = "table" if view == "table" else "kanban"
+    else:
+        view_mode = "table"
 
-    kanban_groups: dict[str, list[DynamicRecord]] = {
-        "new": [],
-        "in_progress": [],
-        "ready": [],
-        "done": [],
-    }
+    kanban_groups: dict[str, list[DynamicRecord]] = {key: [] for key in REPAIR_STATUS_OPTIONS}
     if slug == "orders":
         for record in records:
             record_data = dict(record.data or {})
             repair_status = _derive_repair_status(record_data, status_field)
             if repair_status not in kanban_groups:
-                repair_status = "new"
+                repair_status = REPAIR_STATUS_OPTIONS[0]
             kanban_groups[repair_status].append(record)
 
     ctx = {
@@ -654,6 +767,7 @@ async def module_list(
         "repair_status_options": REPAIR_STATUS_OPTIONS,
         "logistics_status_options": LOGISTICS_STATUS_OPTIONS,
         "repair_status_labels": REPAIR_STATUS_LABELS,
+        "logistics_status_labels": LOGISTICS_STATUS_LABELS,
     }
 
     # HTMX partial
@@ -699,6 +813,9 @@ async def record_detail(
     order_supplies_total = 0.0
     order_no = ""
     supplies_fields: dict[str, str] = {}
+    point_options: list[dict] = []
+    master_options: list[dict] = []
+    point_field, master_field = _get_order_point_and_master_fields(all_field_names)
 
     if slug == "orders":
         supplies_module = await get_module_by_slug(db, "supplies")
@@ -707,6 +824,22 @@ async def record_detail(
         order_supplies = supplies_ctx["order_supplies"]
         order_supplies_total = supplies_ctx["order_supplies_total"]
         supplies_fields = supplies_ctx["supplies_fields"]
+
+        locations = (
+            await db.execute(select(Location).where(Location.is_active == True).order_by(Location.name.asc()))
+        ).scalars().all()
+        executors = (
+            await db.execute(select(Executor).where(Executor.is_active == True).order_by(Executor.name.asc()))
+        ).scalars().all()
+        point_options = [{"id": int(loc.id), "name": str(loc.name)} for loc in locations]
+        master_options = [
+            {
+                "id": int(ex.id),
+                "name": str(ex.name or ""),
+                "location_id": int(ex.location_id) if ex.location_id else None,
+            }
+            for ex in executors
+        ]
 
     record_data = dict(record.data or {})
     current_repair_status = _derive_repair_status(record_data, status_field) if slug == "orders" else ""
@@ -730,8 +863,15 @@ async def record_detail(
         "supplies_fields": supplies_fields,
         "repair_status_options": REPAIR_STATUS_OPTIONS,
         "logistics_status_options": LOGISTICS_STATUS_OPTIONS,
+        "logistics_status_labels": LOGISTICS_STATUS_LABELS,
         "current_repair_status": current_repair_status,
         "current_logistics_status": current_logistics_status,
+        "point_field": point_field,
+        "master_field": master_field,
+        "point_options": point_options,
+        "master_options": master_options,
+        "current_point_id": str(record_data.get("__point_id__", "") or ""),
+        "current_master_id": str(record_data.get("__master_id__", "") or ""),
     })
 
 
@@ -766,8 +906,15 @@ async def record_update(
             new_data[field] = form_data[field]
 
     if slug == "orders":
+        if "__point_id__" in form_data:
+            new_data["__point_id__"] = str(form_data.get("__point_id__", "")).strip()
+        if "__master_id__" in form_data:
+            new_data["__master_id__"] = str(form_data.get("__master_id__", "")).strip()
+
+        new_data = await _validate_and_apply_order_assignment(db, new_data, all_field_names)
+
         if "__repair_status__" in form_data:
-            new_data["__repair_status__"] = str(form_data.get("__repair_status__", "")).strip().lower()
+            new_data["__repair_status__"] = _normalize_repair_status(str(form_data.get("__repair_status__", "")))
         if "__logistics_status__" in form_data:
             new_data["__logistics_status__"] = str(form_data.get("__logistics_status__", "")).strip().lower()
         new_data = _apply_order_status_automation(new_data, status_field)
@@ -938,7 +1085,7 @@ async def record_update_single_field(
     status_field, _, status_colors = _extract_status_settings(module)
     allowed_meta_fields = {"__partner_issued__"}
     if slug == "orders":
-        allowed_meta_fields.update({"__repair_status__", "__logistics_status__"})
+        allowed_meta_fields.update({"__repair_status__", "__logistics_status__", "__point_id__", "__master_id__"})
 
     if field not in all_field_names and field not in allowed_meta_fields:
         raise HTTPException(400, "Поле не найдено")
@@ -965,13 +1112,26 @@ async def record_update_single_field(
         new_data[field] = str(value).strip().lower() in {"1", "true", "on", "yes"}
     else:
         if field == "__repair_status__":
-            if str(value).strip().lower() not in REPAIR_STATUS_OPTIONS:
+            normalized_repair = _normalize_repair_status(str(value))
+            if normalized_repair not in REPAIR_STATUS_OPTIONS:
                 raise HTTPException(400, "Некорректный repair_status")
-            new_data[field] = str(value).strip().lower()
+
+            current_repair = _derive_repair_status(new_data, status_field)
+            if current_repair != normalized_repair:
+                allowed_next = REPAIR_STATUS_TRANSITIONS.get(current_repair, set())
+                if normalized_repair not in allowed_next:
+                    raise HTTPException(400, "Некорректный переход статуса")
+
+            new_data[field] = normalized_repair
         elif field == "__logistics_status__":
             if str(value).strip().lower() not in LOGISTICS_STATUS_OPTIONS:
                 raise HTTPException(400, "Некорректный logistics_status")
             new_data[field] = str(value).strip().lower()
+        elif field == "__point_id__":
+            new_data[field] = str(value).strip()
+            new_data["__master_id__"] = ""
+        elif field == "__master_id__":
+            new_data[field] = str(value).strip()
         else:
             new_data[field] = value
 
@@ -979,6 +1139,8 @@ async def record_update_single_field(
             new_data["__partner_issued__"] = False
 
         if slug == "orders":
+            if field in {"__point_id__", "__master_id__"}:
+                new_data = await _validate_and_apply_order_assignment(db, new_data, all_field_names)
             new_data = _apply_order_status_automation(new_data, status_field)
 
     if slug == "orders":
@@ -1105,6 +1267,17 @@ async def record_create(
     for field in all_field_names:
         data[field] = form_data.get(field, "")
 
+    if slug == "orders":
+        data["__point_id__"] = str(form_data.get("__point_id__", "")).strip()
+        data["__master_id__"] = str(form_data.get("__master_id__", "")).strip()
+        if "__repair_status__" in form_data:
+            data["__repair_status__"] = _normalize_repair_status(str(form_data.get("__repair_status__", "")))
+        if "__logistics_status__" in form_data:
+            data["__logistics_status__"] = str(form_data.get("__logistics_status__", "")).strip().lower()
+        data = await _validate_and_apply_order_assignment(db, data, all_field_names)
+        status_field, _, _ = _extract_status_settings(module)
+        data = _apply_order_status_automation(data, status_field)
+
     record = DynamicRecord(
         module_slug=slug,
         row_index=next_row,
@@ -1151,6 +1324,8 @@ async def record_new_form(
     modules = filter_visible_modules_for_user(modules, user)
 
     initial_values: dict[str, str] = {}
+    point_options: list[dict] = []
+    master_options: list[dict] = []
     if slug == "orders":
         today = date.today().isoformat()
         for field in (module.fields_schema or []):
@@ -1162,6 +1337,22 @@ async def record_new_form(
                 initial_values[field_name] = today
                 break
 
+        locations = (
+            await db.execute(select(Location).where(Location.is_active == True).order_by(Location.name.asc()))
+        ).scalars().all()
+        executors = (
+            await db.execute(select(Executor).where(Executor.is_active == True).order_by(Executor.name.asc()))
+        ).scalars().all()
+        point_options = [{"id": int(loc.id), "name": str(loc.name)} for loc in locations]
+        master_options = [
+            {
+                "id": int(ex.id),
+                "name": str(ex.name or ""),
+                "location_id": int(ex.location_id) if ex.location_id else None,
+            }
+            for ex in executors
+        ]
+
     return templates.TemplateResponse("record_new_modal.html", {
         "request": request,
         "user": user,
@@ -1172,6 +1363,8 @@ async def record_new_form(
         "status_field": status_field,
         "status_options": status_options,
         "initial_values": initial_values,
+        "point_options": point_options,
+        "master_options": master_options,
     })
 
 

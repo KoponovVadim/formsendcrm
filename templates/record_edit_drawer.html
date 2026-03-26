@@ -15,6 +15,44 @@
 
         {% if module.slug == 'orders' %}
         <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header fw-semibold">Основное</div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-12 col-md-6">
+                        <label class="form-label fw-medium mb-1">Точка ремонта</label>
+                        <select class="form-select js-order-assignment-select"
+                                name="__point_id__"
+                                data-slug="{{ module.slug }}"
+                                data-record-id="{{ record.id }}"
+                                data-field="__point_id__">
+                            <option value="">Выберите точку</option>
+                            {% for point in point_options %}
+                            <option value="{{ point.id }}" {% if current_point_id == point.id|string %}selected{% endif %}>{{ point.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label fw-medium mb-1">Мастер</label>
+                        <select class="form-select js-order-assignment-select js-master-select"
+                                name="__master_id__"
+                                data-slug="{{ module.slug }}"
+                                data-record-id="{{ record.id }}"
+                                data-field="__master_id__">
+                            <option value="">Без мастера</option>
+                            {% for master in master_options %}
+                            <option value="{{ master.id }}"
+                                    data-location-id="{{ master.location_id if master.location_id else '' }}"
+                                    {% if current_master_id == master.id|string %}selected{% endif %}>
+                                {{ master.name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card border-0 shadow-sm mb-3">
             <div class="card-header fw-semibold">Статусы</div>
             <div class="card-body">
                 <div class="row g-3">
@@ -36,6 +74,23 @@
                     </div>
                 </div>
             </div>
+        </div>
+
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header fw-semibold">Логистика</div>
+            <div class="card-body small text-muted">
+                Текущий логистический статус: <strong>{{ logistics_status_labels.get(current_logistics_status, current_logistics_status) }}</strong>
+            </div>
+        </div>
+
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header fw-semibold">Финансы</div>
+            <div class="card-body small text-muted">Финансовые показатели синхронизируются из модуля «Финансы» по № заказа.</div>
+        </div>
+
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header fw-semibold">История</div>
+            <div class="card-body small text-muted">История изменений будет доступна в следующем итеративном обновлении.</div>
         </div>
         {% endif %}
 

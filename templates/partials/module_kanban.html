@@ -1,4 +1,4 @@
-{% set fields = namespace(order_no=None, client=None, device=None, master=None, deadline=None) %}
+{% set fields = namespace(order_no=None, client=None, device=None, master=None, deadline=None, point=None) %}
 {% for field in visible_fields %}
     {% set lowered = field|lower %}
     {% if not fields.order_no and ('заказ' in lowered or ('order' in lowered and 'no' in lowered)) %}
@@ -13,32 +13,45 @@
     {% if not fields.master and ('мастер' in lowered or 'исполн' in lowered or 'master' in lowered) %}
         {% set fields.master = field %}
     {% endif %}
+    {% if not fields.point and ('точк' in lowered or 'локац' in lowered or 'location' in lowered or 'point' in lowered) %}
+        {% set fields.point = field %}
+    {% endif %}
     {% if not fields.deadline and ('дедлайн' in lowered or 'deadline' in lowered) %}
         {% set fields.deadline = field %}
     {% endif %}
 {% endfor %}
 
 <div class="kanban-grid">
-    {% for column_key in ['new', 'in_progress', 'ready', 'done'] %}
-    <section class="kanban-column">
+    {% for column_key in repair_status_options %}
+    <section class="kanban-column" data-repair-status="{{ column_key }}">
         <header class="kanban-column-head">
             <div class="fw-semibold">{{ repair_status_labels.get(column_key, column_key) }}</div>
             <span class="badge rounded-pill bg-secondary-subtle text-dark">{{ kanban_groups.get(column_key, [])|length }}</span>
         </header>
-        <div class="kanban-column-body">
+        <div class="kanban-column-body js-kanban-dropzone" data-repair-status="{{ column_key }}">
             {% for record in kanban_groups.get(column_key, []) %}
-            <article class="kanban-card"
+            <article class="kanban-card js-kanban-card"
+                     draggable="true"
+                     data-record-id="{{ record.id }}"
+                     data-slug="{{ module.slug }}"
+                     data-repair-status="{{ column_key }}"
                      hx-get="/modules/{{ module.slug }}/record/{{ record.id }}?panel=drawer"
                      hx-target="#drawer-container"
                      hx-swap="innerHTML">
                 <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
                     <div class="fw-semibold">{{ record.data.get(fields.order_no, '#' ~ record.row_index) }}</div>
-                    <span class="badge text-bg-light">{{ record.data.get('__logistics_status__', 'pending_pickup') }}</span>
+                    {% set logistics_key = record.data.get('__logistics_status__', 'pending_pickup') %}
+                    <span class="badge text-bg-light">{{ logistics_status_labels.get(logistics_key, logistics_key) }}</span>
                 </div>
                 <div class="small text-muted mb-1">{{ record.data.get(fields.client, '-') }}</div>
                 <div class="small mb-2">{{ record.data.get(fields.device, '-') }}</div>
+                <div class="d-flex justify-content-between small text-muted mb-1">
+                    <span><i class="bi bi-geo-alt me-1"></i>{{ record.data.get(fields.point, '-') }}</span>
+                    <span><i class="bi bi-person-badge me-1"></i>{{ record.data.get(fields.master, '-') }}</span>
+                </div>
                 <div class="d-flex justify-content-between small text-muted">
-                    <span>Мастер: {{ record.data.get(fields.master, '-') }}</span>
+                    {% set logistics_key = record.data.get('__logistics_status__', 'pending_pickup') %}
+                    <span>Логистика: {{ logistics_status_labels.get(logistics_key, logistics_key) }}</span>
                     <span>Дедлайн: {{ record.data.get(fields.deadline, '-') }}</span>
                 </div>
             </article>

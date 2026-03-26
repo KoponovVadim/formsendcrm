@@ -543,6 +543,20 @@ html[data-bs-theme="dark"] .record-edit-modal-footer {
     box-shadow: 0 0.6rem 1rem rgba(10, 35, 72, 0.12);
 }
 
+.kanban-card.is-dragging,
+.kanban-card.is-touch-dragging {
+    opacity: 0.6;
+    transform: scale(0.98);
+    box-shadow: 0 0.9rem 1.4rem rgba(10, 35, 72, 0.22);
+}
+
+.js-kanban-dropzone.is-drop-target {
+    background: rgba(15, 122, 229, 0.08);
+    outline: 2px dashed rgba(15, 122, 229, 0.5);
+    outline-offset: -4px;
+    border-radius: 0.75rem;
+}
+
 html[data-bs-theme="dark"] .kanban-column {
     background: #0f1a2b;
     border-color: #2a3a54;
