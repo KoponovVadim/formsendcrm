@@ -139,10 +139,21 @@ def _extract_user_point_id(user) -> int | None:
 def _should_limit_orders_by_point(user) -> bool:
     if getattr(user, "is_superuser", False):
         return False
+
+    permissions = get_user_permissions(user)
+    orders_perms = permissions.get("orders") if isinstance(permissions, dict) else None
+    if isinstance(orders_perms, dict):
+        if bool(orders_perms.get("all_points")):
+            return False
+        if "point_scope" in orders_perms:
+            return bool(orders_perms.get("point_scope"))
+
     # Users with broader operations permissions should see full order flow.
     if can_manage_logistics(user) or can_manage_services(user):
         return False
-    return True
+
+    # Apply point scoping only when user is explicitly bound to a point.
+    return _extract_user_point_id(user) is not None
 
 
 def _get_order_point_and_master_fields(all_fields: list[str]) -> tuple[str | None, str | None]:
@@ -180,27 +191,14 @@ def _derive_display_status_for_order(order_data: dict, status_field: str | None)
 
 def _apply_order_status_automation(order_data: dict, status_field: str | None) -> dict:
     data = dict(order_data or {})
-    repair_status = _derive_repair_status(data, status_field)
+    repair_status = _normalize_repair_status(_derive_repair_status(data, status_field))
     logistics_status = _derive_logistics_status(data)
 
-    # Manual repair-status transitions (Kanban/drawer) are primary.
-    if repair_status == "В ремонте":
-        logistics_status = "at_service"
-    elif repair_status == "Готов":
-        logistics_status = "in_transit_back"
-    elif repair_status == "Выдан":
-        logistics_status = "delivered"
-
-    # Logistics-driven fallbacks for records updated outside of Kanban.
-    if logistics_status == "at_service" and repair_status not in {"Готов", "Выдан", "Отменён"}:
-        repair_status = "В ремонте"
-    if logistics_status == "delivered" and repair_status != "Отменён":
-        repair_status = "Выдан"
-
-    data["__repair_status__"] = _normalize_repair_status(repair_status)
+    # Keep repair and logistics independent so both axes can be edited freely.
+    data["__repair_status__"] = repair_status
     data["__logistics_status__"] = logistics_status
     if status_field:
-        data[status_field] = _derive_display_status_for_order(data, status_field)
+        data[status_field] = repair_status
     return data
 
 
@@ -596,6 +594,7 @@ async def _validate_and_apply_order_assignment(
     db: AsyncSession,
     order_data: dict,
     all_field_names: list[str],
+    require_point: bool = False,
 ) -> dict:
     data = dict(order_data or {})
     point_field, master_field = _get_order_point_and_master_fields(all_field_names)
@@ -610,19 +609,15 @@ async def _validate_and_apply_order_assignment(
             if location:
                 point_id_raw = str(int(location.id))
 
-    if not point_id_raw.isdigit() or int(point_id_raw) <= 0:
-        raise HTTPException(400, "Необходимо выбрать точку ремонта")
-
-    point_id = int(point_id_raw)
-    location = (
-        await db.execute(select(Location).where(Location.id == point_id, Location.is_active == True))
-    ).scalar_one_or_none()
-    if not location:
-        raise HTTPException(400, "Выбранная точка недоступна")
-
-    data["__point_id__"] = point_id
-    if point_field:
-        data[point_field] = str(location.name)
+    point_id = None
+    location = None
+    if point_id_raw.isdigit() and int(point_id_raw) > 0:
+        point_id = int(point_id_raw)
+        location = (
+            await db.execute(select(Location).where(Location.id == point_id, Location.is_active == True))
+        ).scalar_one_or_none()
+        if not location:
+            raise HTTPException(400, "Выбранная точка недоступна")
 
     master_id_raw = str(data.get("__master_id__", "") or "").strip()
     if not master_id_raw and master_field:
@@ -643,7 +638,17 @@ async def _validate_and_apply_order_assignment(
         ).scalar_one_or_none()
         if not executor:
             raise HTTPException(400, "Мастер не найден")
-        if not executor.location_id or int(executor.location_id) != point_id:
+
+        # If point is not selected, infer it from selected master's location.
+        if point_id is None and executor.location_id:
+            inferred_location = (
+                await db.execute(select(Location).where(Location.id == int(executor.location_id), Location.is_active == True))
+            ).scalar_one_or_none()
+            if inferred_location:
+                point_id = int(inferred_location.id)
+                location = inferred_location
+
+        if point_id is not None and (not executor.location_id or int(executor.location_id) != int(point_id)):
             raise HTTPException(400, "Нельзя выбрать мастера из другой точки")
         data["__master_id__"] = master_id
         if master_field:
@@ -652,6 +657,18 @@ async def _validate_and_apply_order_assignment(
         data["__master_id__"] = ""
         if master_field:
             data[master_field] = ""
+
+    if require_point and point_id is None:
+        raise HTTPException(400, "Необходимо выбрать точку ремонта")
+
+    if point_id is not None and location is not None:
+        data["__point_id__"] = point_id
+        if point_field:
+            data[point_field] = str(location.name)
+    else:
+        data["__point_id__"] = ""
+        if point_field:
+            data[point_field] = ""
 
     return data
 
@@ -925,18 +942,29 @@ async def record_update(
             new_data[field] = form_data[field]
 
     if slug == "orders":
-        if "__point_id__" in form_data:
-            new_data["__point_id__"] = str(form_data.get("__point_id__", "")).strip()
-        if "__master_id__" in form_data:
-            new_data["__master_id__"] = str(form_data.get("__master_id__", "")).strip()
+        try:
+            if "__point_id__" in form_data:
+                new_data["__point_id__"] = str(form_data.get("__point_id__", "")).strip()
+            if "__master_id__" in form_data:
+                new_data["__master_id__"] = str(form_data.get("__master_id__", "")).strip()
 
-        new_data = await _validate_and_apply_order_assignment(db, new_data, all_field_names)
+            if "__point_id__" in form_data or "__master_id__" in form_data:
+                new_data = await _validate_and_apply_order_assignment(db, new_data, all_field_names, require_point=False)
 
-        if "__repair_status__" in form_data:
-            new_data["__repair_status__"] = _normalize_repair_status(str(form_data.get("__repair_status__", "")))
-        if "__logistics_status__" in form_data:
-            new_data["__logistics_status__"] = str(form_data.get("__logistics_status__", "")).strip().lower()
-        new_data = _apply_order_status_automation(new_data, status_field)
+            if "__repair_status__" in form_data:
+                new_data["__repair_status__"] = _normalize_repair_status(str(form_data.get("__repair_status__", "")))
+            if "__logistics_status__" in form_data:
+                logistics_raw = str(form_data.get("__logistics_status__", "")).strip().lower()
+                if logistics_raw and logistics_raw in LOGISTICS_STATUS_OPTIONS:
+                    new_data["__logistics_status__"] = logistics_raw
+            new_data = _apply_order_status_automation(new_data, status_field)
+        except HTTPException as exc:
+            if request.headers.get("HX-Request"):
+                return HTMLResponse(
+                    f'<div class="alert alert-danger">{str(exc.detail)}</div>',
+                    status_code=int(getattr(exc, "status_code", 400) or 400),
+                )
+            raise
 
     # Once client handoff is confirmed via status, remove temporary partner-issued priority.
     if status_field and status_field in new_data and _status_eq(str(new_data.get(status_field, "")), "Выдан"):
@@ -1153,7 +1181,7 @@ async def record_update_single_field(
 
         if slug == "orders":
             if field in {"__point_id__", "__master_id__"}:
-                new_data = await _validate_and_apply_order_assignment(db, new_data, all_field_names)
+                new_data = await _validate_and_apply_order_assignment(db, new_data, all_field_names, require_point=False)
             new_data = _apply_order_status_automation(new_data, status_field)
 
     if slug == "orders":
@@ -1287,7 +1315,7 @@ async def record_create(
             data["__repair_status__"] = _normalize_repair_status(str(form_data.get("__repair_status__", "")))
         if "__logistics_status__" in form_data:
             data["__logistics_status__"] = str(form_data.get("__logistics_status__", "")).strip().lower()
-        data = await _validate_and_apply_order_assignment(db, data, all_field_names)
+        data = await _validate_and_apply_order_assignment(db, data, all_field_names, require_point=False)
         status_field, _, _ = _extract_status_settings(module)
         data = _apply_order_status_automation(data, status_field)
 
