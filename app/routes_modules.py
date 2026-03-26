@@ -183,21 +183,19 @@ def _apply_order_status_automation(order_data: dict, status_field: str | None) -
     repair_status = _derive_repair_status(data, status_field)
     logistics_status = _derive_logistics_status(data)
 
-    # Rule 1: logistics at_service => repair in_progress
-    if logistics_status == "at_service":
-        repair_status = "В ремонте"
-    # Rule 2: repair ready => logistics in_transit_back
-    if repair_status == "Готов":
-        logistics_status = "in_transit_back"
-    # Rule 3: logistics delivered => repair done
-    if logistics_status == "delivered":
-        repair_status = "Выдан"
-
-    # Additional reverse rules requested for drag/drop-driven repair transitions.
+    # Manual repair-status transitions (Kanban/drawer) are primary.
     if repair_status == "В ремонте":
         logistics_status = "at_service"
-    if repair_status == "Выдан":
+    elif repair_status == "Готов":
+        logistics_status = "in_transit_back"
+    elif repair_status == "Выдан":
         logistics_status = "delivered"
+
+    # Logistics-driven fallbacks for records updated outside of Kanban.
+    if logistics_status == "at_service" and repair_status not in {"Готов", "Выдан", "Отменён"}:
+        repair_status = "В ремонте"
+    if logistics_status == "delivered" and repair_status != "Отменён":
+        repair_status = "Выдан"
 
     data["__repair_status__"] = _normalize_repair_status(repair_status)
     data["__logistics_status__"] = logistics_status
