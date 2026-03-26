@@ -16,7 +16,7 @@ class Settings:
 
     GOOGLE_CREDENTIALS_JSON: str = os.getenv("GOOGLE_CREDENTIALS_JSON", "")
     SPREADSHEET_ID: str = os.getenv("SPREADSHEET_ID", "")
-    GOOGLE_SHEETS_IMPORT_ENABLED: bool = os.getenv("GOOGLE_SHEETS_IMPORT_ENABLED", "false").lower() == "true"
+    GOOGLE_SHEETS_IMPORT_ENABLED: bool = os.getenv("GOOGLE_SHEETS_IMPORT_ENABLED", "true").lower() == "true"
     FIREBASE_CREDENTIALS_JSON: str = os.getenv("FIREBASE_CREDENTIALS_JSON", "")
 
     FIRST_SUPERUSER_EMAIL: str = os.getenv("FIRST_SUPERUSER_EMAIL", "admin@admin.com")

@@ -19,7 +19,7 @@ Web-приложение CRM, построенное на основе Google Sp
 Добавьте в `.env` при использовании V2:
 
 ```env
-GOOGLE_SHEETS_IMPORT_ENABLED=false
+GOOGLE_SHEETS_IMPORT_ENABLED=true
 FIREBASE_CREDENTIALS_JSON=
 ```
 
@@ -291,3 +291,4 @@ docker compose exec app alembic -c alembic.ini upgrade head
   - Видимость модулей (вкл/выкл)
   - Видимость полей (чекбоксы по каждому полю)
   - Редактирование полей (чекбоксы по каждому полю)
+
