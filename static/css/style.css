@@ -379,6 +379,15 @@
         padding: 0.95rem;
     }
 
+    .record-edit-grid .record-edit-field {
+        padding: 0.6rem;
+    }
+
+    .modal-dialog.modal-lg,
+    .modal-dialog.modal-xl {
+        margin: 0.35rem;
+    }
+
     /* Table -> card transform handled via d-none d-md-block classes in template */
 }
 
@@ -420,6 +429,18 @@
 .record-edit-field .form-select,
 .record-edit-field .form-control-plaintext {
     background: #fff;
+}
+
+.order-supplies-table-wrap {
+    max-height: 34vh;
+    overflow: auto;
+}
+
+.order-supplies-table-wrap thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f8fafc;
 }
 
 /* Smooth transitions */

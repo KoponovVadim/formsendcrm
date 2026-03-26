@@ -7,24 +7,34 @@
 <form hx-post="/modules/{{ module.slug }}/record/new"
       hx-target="body">
     <div class="modal-body">
+        <div class="row g-3 record-edit-grid">
         {% for field in visible_fields %}
-        <div class="mb-3">
-            <label class="form-label fw-medium">{{ field }}</label>
-            {% if field in editable_fields %}
-            {% if status_field and field == status_field %}
-            <select class="form-select" name="{{ field }}">
-                {% for option in status_options %}
-                <option value="{{ option }}" {% if loop.first %}selected{% endif %}>{{ option }}</option>
-                {% endfor %}
-            </select>
-            {% else %}
-            <input type="text" class="form-control" name="{{ field }}" value="">
-            {% endif %}
-            {% else %}
-            <input type="text" class="form-control bg-light" name="{{ field }}" value="" readonly>
-            {% endif %}
+        <div class="col-12 col-md-6 col-xl-4">
+            <div class="record-edit-field h-100">
+                <label class="form-label fw-medium mb-2">{{ field }}</label>
+                {% if field in editable_fields %}
+                {% if status_field and field == status_field %}
+                <select class="form-select" name="{{ field }}">
+                    {% for option in status_options %}
+                    <option value="{{ option }}" {% if loop.first %}selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                </select>
+                {% else %}
+                {% set initial = initial_values.get(field, '') if initial_values else '' %}
+                {% set lowered_field = field|lower %}
+                {% if module.slug == 'orders' and ('дата' in lowered_field or 'date' in lowered_field) and lowered_field not in ['дедлайн', 'дата выдачи', 'гарантия до'] %}
+                <input type="date" class="form-control" name="{{ field }}" value="{{ initial }}">
+                {% else %}
+                <input type="text" class="form-control" name="{{ field }}" value="{{ initial }}">
+                {% endif %}
+                {% endif %}
+                {% else %}
+                <input type="text" class="form-control bg-light" name="{{ field }}" value="{{ initial_values.get(field, '') if initial_values else '' }}" readonly>
+                {% endif %}
+            </div>
         </div>
         {% endfor %}
+        </div>
     </div>
     <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>

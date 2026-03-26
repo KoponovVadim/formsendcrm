@@ -12,13 +12,23 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _normalize_row_data_by_schema(data: dict | None, fields_schema: list | None) -> dict:
+    source = data if isinstance(data, dict) else {}
+    field_names = [str(f.get("name", "")).strip() for f in (fields_schema or []) if isinstance(f, dict)]
+    if not field_names:
+        return dict(source)
+    normalized: dict[str, str] = {}
+    for field_name in field_names:
+        normalized[field_name] = str(source.get(field_name, "")) if source.get(field_name) is not None else ""
+    return normalized
+
+
 async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
     """Pull data from Google Sheets into local database."""
     result = {"status": "success", "records_affected": 0, "message": ""}
     if not settings.GOOGLE_SHEETS_IMPORT_ENABLED:
-        result["status"] = "error"
-        result["message"] = "Google Sheets pull is disabled. PostgreSQL is the primary storage."
-        await _log_sync(db, module.slug, "pull", "error", 0, result["message"])
+        result["message"] = "Google Sheets pull skipped: PostgreSQL is the primary storage."
+        await _log_sync(db, module.slug, "pull", "success", 0, result["message"])
         return result
 
     try:
@@ -76,7 +86,7 @@ async def push_module(db: AsyncSession, module: ModuleConfig) -> dict:
             await _log_sync(db, module.slug, "push", "success", 0, result["message"])
             return result
 
-        rows_data = [rec.data for rec in records]
+        rows_data = [_normalize_row_data_by_schema(rec.data, module.fields_schema) for rec in records]
         sheets_adapter.update_worksheet_data(module.sheet_name, rows_data)
 
         result["records_affected"] = len(rows_data)
@@ -95,8 +105,9 @@ async def push_module(db: AsyncSession, module: ModuleConfig) -> dict:
 async def push_single_record(db: AsyncSession, module: ModuleConfig, record: DynamicRecord):
     """Push a single updated record back to Google Sheets."""
     try:
+        row_data = _normalize_row_data_by_schema(record.data, module.fields_schema)
         sheets_adapter.update_single_row(
-            module.sheet_name, record.row_index, record.data
+            module.sheet_name, record.row_index, row_data
         )
     except Exception as e:
         logger.warning(f"Failed to push single record to Sheets: {e}")

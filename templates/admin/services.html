@@ -25,7 +25,7 @@
             <button type="button" class="btn btn-outline-secondary active" data-category="all">Все</button>
         </div>
 
-        <div class="small text-muted mb-2">В таблице: чекбокс включает услугу для точки, поле рядом меняет цену точки. Кнопка "База -> точки" применяет базовую цену во все включенные точки.</div>
+        <div class="small text-muted mb-2">В таблице: чекбокс включает услугу для точки, поле рядом меняет цену точки.</div>
 
         <div class="table-responsive point-prices-table-wrap">
             <table class="table table-sm table-hover align-middle mb-0 services-unified-table" id="point-prices-table">
@@ -470,7 +470,6 @@
                     <td>
                         <div class="d-flex flex-column gap-1">
                             <button type="button" class="btn btn-sm btn-outline-primary service-edit-btn" data-service-id="${service.service_id}">Редактировать</button>
-                            <button type="button" class="btn btn-sm btn-outline-secondary matrix-apply-base" data-service-id="${service.service_id}">База -> точки</button>
                         </div>
                     </td>
                     ${pointCells}
@@ -508,7 +507,6 @@
                         ${ownPriceBlock}
                         <div class="d-flex gap-2 mb-2">
                             <button type="button" class="btn btn-sm btn-outline-primary flex-fill service-edit-btn" data-service-id="${service.service_id}">Редактировать</button>
-                            <button type="button" class="btn btn-sm btn-outline-secondary flex-fill matrix-apply-base" data-service-id="${service.service_id}">База -> точки</button>
                         </div>
                         ${pointRows}
                     </div>
@@ -605,33 +603,6 @@
             cells.forEach(function (cell) { setMatrixCellState(cell, 'matrix-cell-error'); });
             setPointStatus('Наша цена доступна только администратору.', true);
         }
-    }
-
-    async function applyBasePriceToEnabledPoints(serviceId) {
-        const targetService = (matrixData.services || []).find(function (item) { return Number(item.service_id) === Number(serviceId); });
-        if (!targetService) return;
-
-        const baseValue = Number(targetService.own_price || 0);
-        const points = Array.isArray(matrixData.points) ? matrixData.points : [];
-        let changed = 0;
-
-        for (const point of points) {
-            const checkbox = document.querySelector(`.matrix-enable-input[data-service-id="${serviceId}"][data-point="${point}"]`);
-            if (!checkbox || !checkbox.checked) continue;
-
-            const inputs = document.querySelectorAll(`.matrix-price-input[data-service-id="${serviceId}"][data-point="${point}"]`);
-            inputs.forEach(function (input) {
-                input.disabled = false;
-                input.value = String(baseValue);
-            });
-
-            await saveMatrixCell({ service_id: Number(serviceId), point: point, price: baseValue }, `${serviceId}::${point}`);
-            targetService.point_prices = targetService.point_prices || {};
-            targetService.point_prices[point] = baseValue;
-            changed += 1;
-        }
-
-        setPointStatus(changed > 0 ? `Обновлено точек: ${changed}.` : 'Нет включенных точек.', changed === 0);
     }
 
     async function deleteService() {
@@ -747,17 +718,16 @@
             return;
         }
 
+        const interactiveTarget = event.target.closest('input, button, select, textarea, label, a');
+        if (interactiveTarget) {
+            return;
+        }
+
         const row = event.target.closest('.service-unified-row');
         if (row) {
             selectedServiceId = Number(row.dataset.serviceId || 0);
             renderTable();
             return;
-        }
-
-        const applyBtn = event.target.closest('.matrix-apply-base');
-        if (applyBtn) {
-            const serviceId = Number(applyBtn.dataset.serviceId || 0);
-            if (serviceId) applyBasePriceToEnabledPoints(serviceId);
         }
     });
 

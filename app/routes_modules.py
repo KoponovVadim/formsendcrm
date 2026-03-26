@@ -333,20 +333,21 @@ async def module_list(
     )
     total = (await db.execute(count_stmt)).scalar() or 0
 
-    partner_issued_priority = case(
-        (func.lower(func.coalesce(cast(DynamicRecord.data["__partner_issued__"], String), "false")).like("%true%"), 1),
-        else_=0,
-    ).desc()
+    if status_field:
+        status_expr = func.lower(func.coalesce(cast(DynamicRecord.data[status_field], String), ""))
+        issued_priority = case((status_expr == "выдан", 1), else_=0).asc()
+    else:
+        issued_priority = case((DynamicRecord.id > 0, 0), else_=0).asc()
 
     # Paginated data
     if sort == "oldest":
-        stmt = stmt.order_by(partner_issued_priority, DynamicRecord.row_index.asc())
+        stmt = stmt.order_by(issued_priority, DynamicRecord.row_index.asc())
     elif sort == "updated_desc":
-        stmt = stmt.order_by(partner_issued_priority, DynamicRecord.updated_at.desc(), DynamicRecord.row_index.desc())
+        stmt = stmt.order_by(issued_priority, DynamicRecord.updated_at.desc(), DynamicRecord.row_index.desc())
     elif sort == "updated_asc":
-        stmt = stmt.order_by(partner_issued_priority, DynamicRecord.updated_at.asc(), DynamicRecord.row_index.asc())
+        stmt = stmt.order_by(issued_priority, DynamicRecord.updated_at.asc(), DynamicRecord.row_index.asc())
     else:
-        stmt = stmt.order_by(partner_issued_priority, DynamicRecord.row_index.desc())
+        stmt = stmt.order_by(issued_priority, DynamicRecord.row_index.desc())
 
     stmt = stmt.offset(offset).limit(per_page)
     records = (await db.execute(stmt)).scalars().all()
@@ -754,6 +755,18 @@ async def record_new_form(
     modules = await get_all_modules(db)
     modules = filter_visible_modules_for_user(modules, user)
 
+    initial_values: dict[str, str] = {}
+    if slug == "orders":
+        today = date.today().isoformat()
+        for field in (module.fields_schema or []):
+            if not isinstance(field, dict):
+                continue
+            field_name = str(field.get("name", "")).strip()
+            lowered = field_name.lower()
+            if lowered in {"дата приёма", "дата приема", "принят", "accept_date", "accepted_at"}:
+                initial_values[field_name] = today
+                break
+
     return templates.TemplateResponse("record_new_modal.html", {
         "request": request,
         "user": user,
@@ -763,6 +776,7 @@ async def record_new_form(
         "editable_fields": editable_fields,
         "status_field": status_field,
         "status_options": status_options,
+        "initial_values": initial_values,
     })
 
 

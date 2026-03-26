@@ -13,7 +13,7 @@
     {% endif %}
 
     {% if order_supplies %}
-    <div class="table-responsive mb-3">
+    <div class="table-responsive mb-3 order-supplies-table-wrap">
         <table class="table table-sm align-middle">
             <thead>
                 <tr>
@@ -48,24 +48,24 @@
                   hx-target="#order-supplies-section"
                   hx-swap="outerHTML"
                   class="row g-2">
-                <div class="col-12 col-md-4">
+                <div class="col-6 col-lg-4">
                     <label class="form-label small mb-1">Дата покупки</label>
                     <input type="date" class="form-control" name="supply_date">
                 </div>
-                <div class="col-12 col-md-8">
+                <div class="col-6 col-lg-4">
                     <label class="form-label small mb-1">Наименование расходника</label>
                     <input type="text" class="form-control" name="supply_name" required>
                 </div>
-                <div class="col-12 col-md-4">
+                <div class="col-6 col-lg-4">
                     <label class="form-label small mb-1">Стоимость</label>
                     <input type="text" class="form-control" name="supply_cost" placeholder="0.00">
                 </div>
-                <div class="col-12 col-md-8">
+                <div class="col-6 col-lg-6">
                     <label class="form-label small mb-1">Происхождение</label>
                     <input type="text" class="form-control" name="supply_origin"
                            value="Заказ {{ order_no }}">
                 </div>
-                <div class="col-12">
+                <div class="col-12 col-lg-6 d-flex align-items-end">
                     <button type="submit" class="btn btn-outline-primary btn-sm">
                         <i class="bi bi-plus-lg me-1"></i>Добавить расходник
                     </button>

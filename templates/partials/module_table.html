@@ -116,6 +116,24 @@
             </div>
             {% endif %}
             {% endfor %}
+            {% set mobile_status = record.data.get(status_field, '') if status_field else '' %}
+            {% set mobile_partner_raw = record.data.get(partner_issued_field, false) %}
+            {% set mobile_partner_norm = mobile_partner_raw|string|lower %}
+            {% set mobile_partner_bool = mobile_partner_raw is sameas true or mobile_partner_norm in ['true', '1', 'yes', 'on', 'да'] %}
+            {% set mobile_status_norm = mobile_status|string|lower %}
+            {% if status_field and mobile_status_norm in ['готов', 'выдан'] and status_field in editable_fields %}
+            <div class="mt-2" onclick="event.stopPropagation()">
+                <label class="form-check form-switch m-0 d-inline-flex align-items-center gap-2">
+                    <input class="form-check-input js-partner-issued-checkbox"
+                           type="checkbox"
+                           data-slug="{{ module.slug }}"
+                           data-record-id="{{ record.id }}"
+                           data-field="{{ partner_issued_field }}"
+                           {% if mobile_partner_bool %}checked{% endif %}>
+                    <span class="small text-muted">Выдан партнером</span>
+                </label>
+            </div>
+            {% endif %}
         </div>
     </div>
     {% else %}
