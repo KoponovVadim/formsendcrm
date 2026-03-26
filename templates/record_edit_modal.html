@@ -4,9 +4,9 @@
     </h5>
     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
 </div>
-<form hx-post="/modules/{{ module.slug }}/record/{{ record.id }}"
+<form class="record-edit-form" hx-post="/modules/{{ module.slug }}/record/{{ record.id }}"
       hx-target="#save-result" hx-swap="innerHTML">
-    <div class="modal-body">
+        <div class="modal-body record-edit-modal-body">
         <div id="save-result"></div>
         <div class="row g-3 record-edit-grid">
         {% for field in visible_fields %}
@@ -41,8 +41,8 @@
         {% include "partials/order_supplies_section.html" %}
         {% endif %}
     </div>
-    <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+    <div class="modal-footer record-edit-modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Закрыть</button>
         <button type="submit" class="btn btn-primary">
             <i class="bi bi-check-lg me-1"></i>Сохранить
         </button>

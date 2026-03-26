@@ -2,9 +2,23 @@
 
 :root {
     --sidebar-width: 260px;
-    --sidebar-bg: #1e293b;
-    --sidebar-hover: #334155;
-    --primary-color: #3b82f6;
+    --sidebar-bg: #132033;
+    --sidebar-hover: #22344d;
+    --primary-color: #0f7ae5;
+    --accent-color: #12b886;
+    --surface-1: #ffffff;
+    --surface-2: #f7fafc;
+    --text-main: #0f172a;
+    --text-muted: #5f6b7a;
+}
+
+body.crm-premium-theme {
+    font-family: "Manrope", "Segoe UI", sans-serif;
+    color: var(--text-main);
+    background:
+        radial-gradient(1200px 700px at 110% -120px, rgba(15, 122, 229, 0.16), transparent 58%),
+        radial-gradient(900px 500px at -120px -180px, rgba(18, 184, 134, 0.12), transparent 55%),
+        #eef3f8;
 }
 
 /* Sidebar */
@@ -18,39 +32,43 @@
     z-index: 1040;
     transition: transform 0.3s ease;
     overflow-y: auto;
+    box-shadow: 10px 0 30px rgba(8, 23, 45, 0.2);
 }
 
 .sidebar .nav-link {
     border-radius: 0.5rem;
     padding: 0.55rem 0.75rem;
     font-size: 0.9rem;
-    transition: background-color 0.15s;
+    transition: background-color 0.15s, transform 0.15s;
 }
 
 .sidebar .nav-link:hover,
 .sidebar .nav-link.active {
     background-color: var(--sidebar-hover);
+    transform: translateX(2px);
 }
 
 #page-content-wrapper {
     margin-left: var(--sidebar-width);
     min-height: 100vh;
-    background: #f1f5f9;
+    background: transparent;
 }
 
 /* Module cards on dashboard */
 .module-card {
     transition: transform 0.15s, box-shadow 0.15s;
-    border-radius: 0.75rem;
+    border-radius: 1rem;
+    border: 1px solid #e3ebf4;
 }
 
 .module-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.1) !important;
+    transform: translateY(-3px);
+    box-shadow: 0 0.9rem 1.4rem rgba(8, 30, 70, 0.12) !important;
 }
 
 .quick-actions-card {
-    background: linear-gradient(135deg, #ffffff 0%, #e8f0fe 100%);
+    background: linear-gradient(135deg, #ffffff 0%, #e8f5ff 56%, #effff8 100%);
+    border: 1px solid #d6e5f5;
 }
 
 .mobile-fab {
@@ -268,7 +286,7 @@
 }
 
 .record-card:hover {
-    box-shadow: 0 0.25rem 0.5rem rgba(0, 0, 0, 0.1);
+    box-shadow: 0 0.45rem 1rem rgba(12, 30, 62, 0.12);
 }
 
 /* Login page */
@@ -278,10 +296,10 @@
 
 /* Table improvements */
 .table th {
-    font-size: 0.8rem;
+    font-size: 0.76rem;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: #64748b;
+    color: #526273;
     font-weight: 600;
 }
 
@@ -292,13 +310,27 @@
 
 /* Modal */
 .modal-content {
-    border: 0;
-    border-radius: 1rem;
+    border: 1px solid #dce7f3;
+    border-radius: 1.05rem;
+    box-shadow: 0 1.2rem 2.3rem rgba(6, 24, 52, 0.25);
+}
+
+.modal-header {
+    border-bottom: 1px solid #e4edf7;
+    background: linear-gradient(180deg, #fcfeff 0%, #f5f9fd 100%);
 }
 
 /* Cards */
 .card {
-    border-radius: 0.75rem;
+    border-radius: 0.95rem;
+    border: 1px solid #dde7f3;
+    box-shadow: 0 0.5rem 1.1rem rgba(14, 31, 61, 0.07);
+}
+
+.card .card-header {
+    border-bottom: 1px solid #e5edf6;
+    background: #fbfdff;
+    font-weight: 700;
 }
 
 .service-price-editor {
@@ -345,6 +377,42 @@
     background-color: var(--primary-color);
 }
 
+.btn-primary {
+    background: linear-gradient(135deg, #0f7ae5 0%, #0f5bc8 100%);
+    border-color: #0f69d6;
+}
+
+.btn-primary:hover,
+.btn-primary:focus {
+    background: linear-gradient(135deg, #0e70d2 0%, #0f56b6 100%);
+    border-color: #0f5bc8;
+}
+
+.btn-outline-primary {
+    border-color: #8abcf2;
+    color: #0f5cb8;
+}
+
+.record-edit-modal-body {
+    background: linear-gradient(180deg, #fbfdff 0%, #f6fafd 100%);
+}
+
+.record-edit-modal-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(4px);
+    border-top: 1px solid #dce8f5;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.record-edit-modal-footer .btn {
+    min-width: 140px;
+}
+
 /* ── MOBILE RESPONSIVE ── */
 @media (max-width: 767.98px) {
     .sidebar {
@@ -386,6 +454,12 @@
     .modal-dialog.modal-lg,
     .modal-dialog.modal-xl {
         margin: 0.35rem;
+        max-width: calc(100% - 0.7rem);
+    }
+
+    .record-edit-modal-footer .btn {
+        flex: 1 1 100%;
+        min-width: 0;
     }
 
     /* Table -> card transform handled via d-none d-md-block classes in template */
