@@ -1,0 +1,5 @@
+{% if module.slug == 'orders' and view_mode == 'kanban' %}
+    {% include "partials/module_kanban.html" %}
+{% else %}
+    {% include "partials/module_table.html" %}
+{% endif %}

@@ -22,6 +22,7 @@ from app.auth import (
 )
 from app.schema_loader import get_all_modules
 from app import sync_service
+from app import sheets_adapter
 from models.crm import Executor, Location, LocationPrice, LogisticsDelivery, Order, Service, Task
 from repositories.crm_repository import CRMRepository
 from services.order_backup_service import remove_order_from_dynamic_modules
@@ -1197,6 +1198,42 @@ async def sync_push(
         for slug, r in results.items():
             html += f'<div>{slug}: {r["message"]}</div>'
         html += '</div>'
+        return HTMLResponse(html)
+    return RedirectResponse("/admin/", status_code=302)
+
+
+@router.post("/sync/check", response_class=HTMLResponse)
+async def sync_check(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    _require_admin(user)
+    from app.schema_loader import get_all_modules
+
+    modules = await get_all_modules(db)
+    html = '<div class="alert alert-secondary"><div class="fw-semibold mb-2">Проверка синхронизации</div>'
+
+    for module in modules:
+        crm_count = (
+            await db.execute(
+                select(func.count()).where(DynamicRecord.module_slug == module.slug)
+            )
+        ).scalar() or 0
+        google_count = 0
+        try:
+            google_rows = sheets_adapter.get_worksheet_data(module.sheet_name)
+            google_count = len(google_rows or [])
+        except Exception as exc:
+            html += f'<div>{module.slug}: ошибка чтения Google ({str(exc)})</div>'
+            continue
+
+        delta = crm_count - google_count
+        marker = "OK" if delta == 0 else f"Δ {delta:+d}"
+        html += f'<div>{module.slug}: CRM={crm_count}, Google={google_count} ({marker})</div>'
+
+    html += '</div>'
+    if request.headers.get("HX-Request"):
         return HTMLResponse(html)
     return RedirectResponse("/admin/", status_code=302)
 

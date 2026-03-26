@@ -21,6 +21,14 @@ body.crm-premium-theme {
         #eef3f8;
 }
 
+html[data-bs-theme="dark"] body.crm-premium-theme {
+    color: #e6edf6;
+    background:
+        radial-gradient(1100px 650px at 110% -200px, rgba(27, 99, 180, 0.25), transparent 58%),
+        radial-gradient(900px 520px at -140px -220px, rgba(18, 184, 134, 0.18), transparent 52%),
+        #0c1320;
+}
+
 /* Sidebar */
 .sidebar {
     width: var(--sidebar-width);
@@ -52,6 +60,54 @@ body.crm-premium-theme {
     margin-left: var(--sidebar-width);
     min-height: 100vh;
     background: transparent;
+}
+
+html[data-bs-theme="dark"] #page-content-wrapper {
+    background: transparent;
+}
+
+html[data-bs-theme="dark"] .card,
+html[data-bs-theme="dark"] .modal-content,
+html[data-bs-theme="dark"] .offcanvas,
+html[data-bs-theme="dark"] .table-responsive {
+    background-color: #111a2a;
+    border-color: #223249;
+}
+
+html[data-bs-theme="dark"] .card .card-header,
+html[data-bs-theme="dark"] .modal-header,
+html[data-bs-theme="dark"] .table thead th {
+    background: #182437;
+    border-color: #27384f;
+    color: #d6e0ec;
+}
+
+html[data-bs-theme="dark"] .table td {
+    border-color: #223249;
+    color: #e1e8f2;
+}
+
+html[data-bs-theme="dark"] .text-muted,
+html[data-bs-theme="dark"] .small.text-muted {
+    color: #96a6bb !important;
+}
+
+html[data-bs-theme="dark"] .record-edit-field {
+    background: #131f31;
+    border-color: #2b3b55;
+}
+
+html[data-bs-theme="dark"] .record-edit-field .form-control,
+html[data-bs-theme="dark"] .record-edit-field .form-select,
+html[data-bs-theme="dark"] .record-edit-field .form-control-plaintext {
+    background: #0f1827;
+    border-color: #30425d;
+    color: #e5edf7;
+}
+
+html[data-bs-theme="dark"] .record-edit-modal-footer {
+    background: rgba(16, 25, 40, 0.95);
+    border-top-color: #2a3c56;
 }
 
 /* Module cards on dashboard */
@@ -306,6 +362,18 @@ body.crm-premium-theme {
 .table td {
     font-size: 0.9rem;
     vertical-align: middle;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.table-responsive {
+    overflow-x: auto;
+}
+
+.table {
+    table-layout: fixed;
 }
 
 /* Modal */
@@ -413,6 +481,83 @@ body.crm-premium-theme {
     min-width: 140px;
 }
 
+#orderDrawer {
+    width: min(720px, 95vw);
+}
+
+#orderDrawer .offcanvas-body {
+    overflow-y: auto;
+}
+
+.drawer-actions {
+    position: sticky;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(4px);
+    z-index: 4;
+}
+
+.kanban-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(230px, 1fr));
+    gap: 0.9rem;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+}
+
+.kanban-column {
+    border: 1px solid #d7e2ef;
+    border-radius: 0.95rem;
+    background: #f8fbff;
+    min-height: 280px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+}
+
+.kanban-column-head {
+    padding: 0.7rem 0.8rem;
+    border-bottom: 1px solid #dbe7f4;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.kanban-column-body {
+    padding: 0.6rem;
+    display: grid;
+    gap: 0.55rem;
+    align-content: start;
+}
+
+.kanban-card {
+    border: 1px solid #d6e4f1;
+    border-radius: 0.85rem;
+    background: #ffffff;
+    padding: 0.65rem;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.kanban-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0.6rem 1rem rgba(10, 35, 72, 0.12);
+}
+
+html[data-bs-theme="dark"] .kanban-column {
+    background: #0f1a2b;
+    border-color: #2a3a54;
+}
+
+html[data-bs-theme="dark"] .kanban-column-head {
+    border-color: #2e4260;
+}
+
+html[data-bs-theme="dark"] .kanban-card {
+    background: #121f33;
+    border-color: #314663;
+    color: #e8eff8;
+}
+
 /* ── MOBILE RESPONSIVE ── */
 @media (max-width: 767.98px) {
     .sidebar {
@@ -462,7 +607,17 @@ body.crm-premium-theme {
         min-width: 0;
     }
 
+    .kanban-grid {
+        grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+
     /* Table -> card transform handled via d-none d-md-block classes in template */
+}
+
+@media (min-width: 768px) and (max-width: 1199.98px) {
+    .kanban-grid {
+        grid-template-columns: repeat(2, minmax(260px, 1fr));
+    }
 }
 
 @media (max-width: 575.98px) {

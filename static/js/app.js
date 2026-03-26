@@ -540,9 +540,11 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!container || !slug) return;
         const searchInput = document.querySelector("input[name='search']");
         const sortSelect = document.querySelector("select[name='sort']");
+        const viewInput = document.querySelector("input[name='view']");
+        const view = (viewInput && viewInput.value) ? viewInput.value : 'table';
         const search = encodeURIComponent(searchInput ? searchInput.value : '');
         const sort = encodeURIComponent(sortSelect ? sortSelect.value : 'newest');
-        htmx.ajax('GET', `/modules/${slug}?search=${search}&sort=${sort}`, {
+        htmx.ajax('GET', `/modules/${slug}?search=${search}&sort=${sort}&view=${encodeURIComponent(view)}`, {
             target: '#records-container',
             swap: 'innerHTML'
         });
@@ -726,6 +728,14 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         }
 
+        if (event.detail.target.id === 'drawer-container') {
+            const drawerEl = document.getElementById('orderDrawer');
+            if (drawerEl) {
+                const drawer = bootstrap.Offcanvas.getOrCreateInstance(drawerEl);
+                drawer.show();
+            }
+        }
+
         if (event.detail.target.id === 'records-container') {
             initStatusSelects(event.detail.target);
             initOrdersBulkStatus(event.detail.target);
@@ -779,6 +789,24 @@ document.addEventListener('DOMContentLoaded', function () {
                     }
                 }
             }, 1500);
+        }
+
+        if (event.detail.successful && event.detail.target &&
+            event.detail.target.id === 'save-result-drawer') {
+            setTimeout(function () {
+                const drawerEl = document.getElementById('orderDrawer');
+                if (drawerEl) {
+                    const drawer = bootstrap.Offcanvas.getInstance(drawerEl);
+                    if (drawer) drawer.hide();
+                }
+                const container = document.getElementById('records-container');
+                if (container) {
+                    const slugMatch = window.location.pathname.match(/^\/modules\/([^/]+)/);
+                    if (slugMatch && slugMatch[1]) {
+                        refreshRecordsContainer(slugMatch[1]);
+                    }
+                }
+            }, 500);
         }
     });
 });

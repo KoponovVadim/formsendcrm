@@ -27,6 +27,29 @@ STATUS_FIELD_CANDIDATES = (
     "order status",
 )
 
+MODULE_KEY_FIELD_CANDIDATES = {
+    "orders": ["№ заказа", "номер заказа", "номер", "order_no", "order id", "id"],
+    "clients": ["№ заказа", "номер заказа", "номер", "order_no", "id"],
+    "finance": ["№ заказа", "номер заказа", "номер", "order_no", "id"],
+    "supplies": ["№ п/п", "номер", "id", "order_no"],
+    "warranty": ["№ заказа", "номер заказа", "номер", "order_no", "id"],
+    "analytics": ["Месяц", "month", "id"],
+}
+
+
+def _find_sync_key_field(module: ModuleConfig, headers: list[str]) -> str | None:
+    header_map = {str(h).strip().lower(): str(h).strip() for h in headers if str(h).strip()}
+    candidates = MODULE_KEY_FIELD_CANDIDATES.get(module.slug, ["id", "ID", "Id"])
+    for candidate in candidates:
+        key = str(candidate).strip().lower()
+        if key in header_map:
+            return header_map[key]
+    for header in headers:
+        lowered = str(header).strip().lower()
+        if lowered in {"id", "order_no", "номер", "№ заказа"}:
+            return str(header).strip()
+    return None
+
 
 def _find_order_number_field(fields_schema: list | None) -> str | None:
     field_names = [str(f.get("name", "")).strip() for f in (fields_schema or []) if isinstance(f, dict)]
@@ -183,28 +206,70 @@ async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
                 if normalized_key and normalized_key not in headers:
                     headers.append(normalized_key)
 
-        # Delete existing records for this module
-        await db.execute(
-            delete(DynamicRecord).where(DynamicRecord.module_slug == module.slug)
-        )
+        key_field = _find_sync_key_field(module, headers)
+        existing_records = (
+            await db.execute(select(DynamicRecord).where(DynamicRecord.module_slug == module.slug))
+        ).scalars().all()
 
-        # Insert new records
+        existing_by_key: dict[str, DynamicRecord] = {}
+        for record in existing_records:
+            if key_field:
+                key_value = str((record.data or {}).get(key_field, "") or "").strip()
+                if key_value:
+                    existing_by_key[key_value] = record
+
+        created = 0
+        updated = 0
+        touched_ids: set[int] = set()
+        incoming_keys: set[str] = set()
+
         for idx, row in enumerate(rows, start=2):
-            data = {}
+            normalized_row = _normalize_row_data_by_schema(row, module.fields_schema, module.slug)
             for h in headers:
-                data[h] = str(row.get(h, "")) if row.get(h) is not None else ""
-            record = DynamicRecord(
-                module_slug=module.slug,
-                row_index=idx,
-                data=data,
-                updated_at=datetime.now(timezone.utc),
-            )
-            db.add(record)
+                if h not in normalized_row:
+                    normalized_row[h] = ""
+
+            key_value = str(normalized_row.get(key_field or "", "") or "").strip() if key_field else ""
+            if key_value:
+                incoming_keys.add(key_value)
+
+            record = existing_by_key.get(key_value) if key_value else None
+            if not record:
+                record = next((r for r in existing_records if r.row_index == idx and r.id not in touched_ids), None)
+
+            if record:
+                record.data = normalized_row
+                record.row_index = idx
+                record.updated_at = datetime.now(timezone.utc)
+                touched_ids.add(record.id)
+                updated += 1
+            else:
+                db.add(
+                    DynamicRecord(
+                        module_slug=module.slug,
+                        row_index=idx,
+                        data=normalized_row,
+                        updated_at=datetime.now(timezone.utc),
+                    )
+                )
+                created += 1
+
+        deleted = 0
+        if key_field:
+            stale_records = [
+                record for record in existing_records
+                if str((record.data or {}).get(key_field, "") or "").strip()
+                and str((record.data or {}).get(key_field, "") or "").strip() not in incoming_keys
+            ]
+            if stale_records:
+                stale_ids = [record.id for record in stale_records]
+                await db.execute(delete(DynamicRecord).where(DynamicRecord.id.in_(stale_ids)))
+                deleted = len(stale_ids)
 
         await db.commit()
-        result["records_affected"] = len(rows)
-        result["message"] = f"Pulled {len(rows)} records"
-        await _log_sync(db, module.slug, "pull", "success", len(rows), result["message"])
+        result["records_affected"] = created + updated
+        result["message"] = f"Pulled {len(rows)} rows (created={created}, updated={updated}, removed={deleted})"
+        await _log_sync(db, module.slug, "pull", "success", created + updated, result["message"])
 
     except Exception as e:
         logger.exception(f"Pull failed for {module.slug}")

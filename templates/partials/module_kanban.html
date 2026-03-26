@@ -1,0 +1,51 @@
+{% set fields = namespace(order_no=None, client=None, device=None, master=None, deadline=None) %}
+{% for field in visible_fields %}
+    {% set lowered = field|lower %}
+    {% if not fields.order_no and ('заказ' in lowered or ('order' in lowered and 'no' in lowered)) %}
+        {% set fields.order_no = field %}
+    {% endif %}
+    {% if not fields.client and ('клиент' in lowered or 'фио' in lowered or 'client' in lowered) %}
+        {% set fields.client = field %}
+    {% endif %}
+    {% if not fields.device and ('устрой' in lowered or 'device' in lowered) %}
+        {% set fields.device = field %}
+    {% endif %}
+    {% if not fields.master and ('мастер' in lowered or 'исполн' in lowered or 'master' in lowered) %}
+        {% set fields.master = field %}
+    {% endif %}
+    {% if not fields.deadline and ('дедлайн' in lowered or 'deadline' in lowered) %}
+        {% set fields.deadline = field %}
+    {% endif %}
+{% endfor %}
+
+<div class="kanban-grid">
+    {% for column_key in ['new', 'in_progress', 'ready', 'done'] %}
+    <section class="kanban-column">
+        <header class="kanban-column-head">
+            <div class="fw-semibold">{{ repair_status_labels.get(column_key, column_key) }}</div>
+            <span class="badge rounded-pill bg-secondary-subtle text-dark">{{ kanban_groups.get(column_key, [])|length }}</span>
+        </header>
+        <div class="kanban-column-body">
+            {% for record in kanban_groups.get(column_key, []) %}
+            <article class="kanban-card"
+                     hx-get="/modules/{{ module.slug }}/record/{{ record.id }}?panel=drawer"
+                     hx-target="#drawer-container"
+                     hx-swap="innerHTML">
+                <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                    <div class="fw-semibold">{{ record.data.get(fields.order_no, '#' ~ record.row_index) }}</div>
+                    <span class="badge text-bg-light">{{ record.data.get('__logistics_status__', 'pending_pickup') }}</span>
+                </div>
+                <div class="small text-muted mb-1">{{ record.data.get(fields.client, '-') }}</div>
+                <div class="small mb-2">{{ record.data.get(fields.device, '-') }}</div>
+                <div class="d-flex justify-content-between small text-muted">
+                    <span>Мастер: {{ record.data.get(fields.master, '-') }}</span>
+                    <span>Дедлайн: {{ record.data.get(fields.deadline, '-') }}</span>
+                </div>
+            </article>
+            {% else %}
+            <div class="text-muted small py-3 px-2">Нет заказов</div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endfor %}
+</div>

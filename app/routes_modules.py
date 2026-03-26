@@ -59,6 +59,98 @@ COMPLETED_STATUS_KEYS = {
     "closed",
 }
 
+REPAIR_STATUS_OPTIONS = ["new", "in_progress", "ready", "done"]
+LOGISTICS_STATUS_OPTIONS = [
+    "pending_pickup",
+    "in_transit_to_service",
+    "at_service",
+    "in_transit_back",
+    "delivered",
+]
+
+REPAIR_STATUS_LABELS = {
+    "new": "Новый",
+    "in_progress": "В ремонте",
+    "ready": "Готов",
+    "done": "Выдан",
+}
+
+
+def _display_status_to_repair_status(display_status: str) -> str:
+    key = _status_key(display_status)
+    if key in {"новый"}:
+        return "new"
+    if key in {"в ремонте", "в работе", "ожидает доставки в ремонт", "едет в точку ремонта", "приехал в точку ремонта"}:
+        return "in_progress"
+    if key in {"готов", "ожидает выдачи", "едет на выдачу"}:
+        return "ready"
+    if key in {"выдан", "завершен", "закрыт"}:
+        return "done"
+    return "new"
+
+
+def _derive_repair_status(order_data: dict, status_field: str | None) -> str:
+    raw_repair = str(order_data.get("__repair_status__", "")).strip().lower()
+    if raw_repair in REPAIR_STATUS_OPTIONS:
+        return raw_repair
+    if status_field:
+        return _display_status_to_repair_status(str(order_data.get(status_field, "")))
+    return "new"
+
+
+def _derive_logistics_status(order_data: dict) -> str:
+    raw_logistics = str(order_data.get("__logistics_status__", "")).strip().lower()
+    if raw_logistics in LOGISTICS_STATUS_OPTIONS:
+        return raw_logistics
+    return "pending_pickup"
+
+
+def _derive_display_status_for_order(order_data: dict, status_field: str | None) -> str:
+    if not status_field:
+        return ""
+    repair_status = _derive_repair_status(order_data, status_field)
+    logistics_status = _derive_logistics_status(order_data)
+
+    if repair_status == "done":
+        return "Выдан"
+    if repair_status == "ready":
+        if logistics_status == "in_transit_back":
+            return "Едет на выдачу"
+        if logistics_status == "delivered":
+            return "Выдан"
+        return "Готов"
+    if repair_status == "in_progress":
+        if logistics_status == "pending_pickup":
+            return "Ожидает доставки в ремонт"
+        if logistics_status == "in_transit_to_service":
+            return "Едет в точку ремонта"
+        if logistics_status == "at_service":
+            return "В ремонте"
+        return "В ремонте"
+    return "Новый"
+
+
+def _apply_order_status_automation(order_data: dict, status_field: str | None) -> dict:
+    data = dict(order_data or {})
+    repair_status = _derive_repair_status(data, status_field)
+    logistics_status = _derive_logistics_status(data)
+
+    # Rule 1: at_service => in_progress
+    if logistics_status == "at_service":
+        repair_status = "in_progress"
+    # Rule 2: ready => in_transit_back
+    if repair_status == "ready":
+        logistics_status = "in_transit_back"
+    # Rule 3: delivered => done
+    if logistics_status == "delivered":
+        repair_status = "done"
+
+    data["__repair_status__"] = repair_status
+    data["__logistics_status__"] = logistics_status
+    if status_field:
+        data[status_field] = _derive_display_status_for_order(data, status_field)
+    return data
+
 
 def _find_field_name_by_candidates(field_names: list[str], candidates: list[str]) -> str | None:
     lowered = {str(name).strip().lower(): name for name in field_names if str(name).strip()}
@@ -318,8 +410,26 @@ async def _sync_order_dependencies(db: AsyncSession, order_data: dict) -> None:
     source_issued_field = _find_field_name_by_candidates(order_field_names, ["Дата выдачи", "выдача", "issued", "issue date"])
     source_warranty_field = _find_field_name_by_candidates(order_field_names, ["Гарантия до", "гарантия", "warranty"])
 
-    dependent_modules = ["clients", "finance", "warranty"]
+    dependent_modules = ["clients", "finance", "warranty", "analytics"]
     now = datetime.now(timezone.utc)
+
+    issued_value = str(order_data.get(source_issued_field or "", "") or "") if source_issued_field else ""
+    issued_date = issued_value.strip() or date.today().isoformat()
+    issued_month = issued_date[:7] if len(issued_date) >= 7 else date.today().strftime("%Y-%m")
+
+    related_values = {
+        "order_no": order_no,
+        "client": str(order_data.get(source_client_field or "", "") or "") if source_client_field else "",
+        "status": str(order_data.get(source_status_field or "", "") or "") if source_status_field else "",
+        "accepted": str(order_data.get(source_accepted_field or "", "") or "") if source_accepted_field else "",
+        "device": str(order_data.get(source_device_field or "", "") or "") if source_device_field else "",
+        "issue": str(order_data.get(source_issue_field or "", "") or "") if source_issue_field else "",
+        "master": str(order_data.get(source_master_field or "", "") or "") if source_master_field else "",
+        "deadline": str(order_data.get(source_deadline_field or "", "") or "") if source_deadline_field else "",
+        "issued": issued_value,
+        "warranty": str(order_data.get(source_warranty_field or "", "") or "") if source_warranty_field else "",
+        "month": issued_month,
+    }
 
     for dependent_slug in dependent_modules:
         dependent_module = await get_module_by_slug(db, dependent_slug)
@@ -328,7 +438,44 @@ async def _sync_order_dependencies(db: AsyncSession, order_data: dict) -> None:
 
         target_field_names = [f.get("name", "") for f in (dependent_module.fields_schema or []) if isinstance(f, dict)]
         target_order_field = _find_field_name_by_candidates(target_field_names, ["№ заказа", "номер заказа", "номер", "заказ"])
-        if not target_order_field:
+        if dependent_slug != "analytics" and not target_order_field:
+            continue
+
+        if dependent_slug == "analytics":
+            month_field = _find_field_name_by_candidates(target_field_names, ["Месяц", "month"])
+            if not month_field:
+                continue
+            related_records = (
+                await db.execute(
+                    select(DynamicRecord).where(
+                        DynamicRecord.module_slug == dependent_slug,
+                        cast(DynamicRecord.data[month_field], String) == related_values["month"],
+                    )
+                )
+            ).scalars().all()
+            if not related_records:
+                max_row = (
+                    await db.execute(select(func.max(DynamicRecord.row_index)).where(DynamicRecord.module_slug == dependent_slug))
+                ).scalar() or 1
+                draft_data: dict[str, str] = {name: "" for name in target_field_names}
+                draft_data[month_field] = related_values["month"]
+                for money_field in [
+                    _find_field_name_by_candidates(target_field_names, ["Выручка"]),
+                    _find_field_name_by_candidates(target_field_names, ["Затраты (запчасти)"]),
+                    _find_field_name_by_candidates(target_field_names, ["Затраты (расходники)"]),
+                    _find_field_name_by_candidates(target_field_names, ["Выплаты (зарплата)"]),
+                    _find_field_name_by_candidates(target_field_names, ["Чистая прибыль"]),
+                ]:
+                    if money_field:
+                        draft_data[money_field] = str(draft_data.get(money_field, "") or "0")
+                db.add(
+                    DynamicRecord(
+                        module_slug=dependent_slug,
+                        row_index=max_row + 1,
+                        data=draft_data,
+                        updated_at=now,
+                    )
+                )
             continue
 
         related_records = (
@@ -341,7 +488,20 @@ async def _sync_order_dependencies(db: AsyncSession, order_data: dict) -> None:
         ).scalars().all()
 
         if not related_records:
-            continue
+            max_row = (
+                await db.execute(select(func.max(DynamicRecord.row_index)).where(DynamicRecord.module_slug == dependent_slug))
+            ).scalar() or 1
+            draft_data: dict[str, str] = {name: "" for name in target_field_names}
+            draft_data[target_order_field] = order_no
+            related_records = [
+                DynamicRecord(
+                    module_slug=dependent_slug,
+                    row_index=max_row + 1,
+                    data=draft_data,
+                    updated_at=now,
+                )
+            ]
+            db.add(related_records[0])
 
         target_client_field = _find_field_name_by_candidates(target_field_names, ["ФИО название", "Клиент", "client", "name"])
         target_status_field = _find_field_name_by_candidates(target_field_names, ["Статус", "Статус заказа", "status"])
@@ -355,26 +515,26 @@ async def _sync_order_dependencies(db: AsyncSession, order_data: dict) -> None:
 
         for related_record in related_records:
             related_data = dict(related_record.data or {})
-            related_data[target_order_field] = order_no
+            related_data[target_order_field] = related_values["order_no"]
 
             if source_client_field and target_client_field:
-                related_data[target_client_field] = str(order_data.get(source_client_field, "") or "")
+                related_data[target_client_field] = related_values["client"]
             if source_status_field and target_status_field:
-                related_data[target_status_field] = str(order_data.get(source_status_field, "") or "")
+                related_data[target_status_field] = related_values["status"]
             if source_accepted_field and target_accepted_field:
-                related_data[target_accepted_field] = str(order_data.get(source_accepted_field, "") or "")
+                related_data[target_accepted_field] = related_values["accepted"]
             if source_device_field and target_device_field:
-                related_data[target_device_field] = str(order_data.get(source_device_field, "") or "")
+                related_data[target_device_field] = related_values["device"]
             if source_issue_field and target_issue_field:
-                related_data[target_issue_field] = str(order_data.get(source_issue_field, "") or "")
+                related_data[target_issue_field] = related_values["issue"]
             if source_master_field and target_master_field:
-                related_data[target_master_field] = str(order_data.get(source_master_field, "") or "")
+                related_data[target_master_field] = related_values["master"]
             if source_deadline_field and target_deadline_field:
-                related_data[target_deadline_field] = str(order_data.get(source_deadline_field, "") or "")
+                related_data[target_deadline_field] = related_values["deadline"]
             if source_issued_field and target_issued_field:
-                related_data[target_issued_field] = str(order_data.get(source_issued_field, "") or "")
+                related_data[target_issued_field] = related_values["issued"]
             if source_warranty_field and target_warranty_field:
-                related_data[target_warranty_field] = str(order_data.get(source_warranty_field, "") or "")
+                related_data[target_warranty_field] = related_values["warranty"]
 
             related_record.data = related_data
             related_record.updated_at = now
@@ -387,6 +547,7 @@ async def module_list(
     page: int = 1,
     search: str = "",
     sort: str = "newest",
+    view: str = "table",
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -454,6 +615,21 @@ async def module_list(
     total_pages = max(1, (total + per_page - 1) // per_page)
     modules = await get_all_modules(db)
     modules = filter_visible_modules_for_user(modules, user)
+    view_mode = "kanban" if slug == "orders" and view == "kanban" else "table"
+
+    kanban_groups: dict[str, list[DynamicRecord]] = {
+        "new": [],
+        "in_progress": [],
+        "ready": [],
+        "done": [],
+    }
+    if slug == "orders":
+        for record in records:
+            record_data = dict(record.data or {})
+            repair_status = _derive_repair_status(record_data, status_field)
+            if repair_status not in kanban_groups:
+                repair_status = "new"
+            kanban_groups[repair_status].append(record)
 
     ctx = {
         "request": request,
@@ -473,11 +649,16 @@ async def module_list(
         "status_colors": status_colors,
         "row_bg_for_status": lambda value: _row_bg_for_status(value, status_colors),
         "partner_issued_field": "__partner_issued__",
+        "view_mode": view_mode,
+        "kanban_groups": kanban_groups,
+        "repair_status_options": REPAIR_STATUS_OPTIONS,
+        "logistics_status_options": LOGISTICS_STATUS_OPTIONS,
+        "repair_status_labels": REPAIR_STATUS_LABELS,
     }
 
     # HTMX partial
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse("partials/module_table.html", ctx)
+        return templates.TemplateResponse("partials/module_records_view.html", ctx)
 
     return templates.TemplateResponse("module_list.html", ctx)
 
@@ -487,6 +668,7 @@ async def record_detail(
     request: Request,
     slug: str,
     record_id: int,
+    panel: str = "modal",
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -526,7 +708,13 @@ async def record_detail(
         order_supplies_total = supplies_ctx["order_supplies_total"]
         supplies_fields = supplies_ctx["supplies_fields"]
 
-    return templates.TemplateResponse("record_edit_modal.html", {
+    record_data = dict(record.data or {})
+    current_repair_status = _derive_repair_status(record_data, status_field) if slug == "orders" else ""
+    current_logistics_status = _derive_logistics_status(record_data) if slug == "orders" else ""
+
+    template_name = "record_edit_drawer.html" if slug == "orders" and panel == "drawer" else "record_edit_modal.html"
+
+    return templates.TemplateResponse(template_name, {
         "request": request,
         "user": user,
         "module": module,
@@ -540,6 +728,10 @@ async def record_detail(
         "order_supplies": order_supplies,
         "order_supplies_total": order_supplies_total,
         "supplies_fields": supplies_fields,
+        "repair_status_options": REPAIR_STATUS_OPTIONS,
+        "logistics_status_options": LOGISTICS_STATUS_OPTIONS,
+        "current_repair_status": current_repair_status,
+        "current_logistics_status": current_logistics_status,
     })
 
 
@@ -572,6 +764,13 @@ async def record_update(
     for field in editable_fields:
         if field in form_data:
             new_data[field] = form_data[field]
+
+    if slug == "orders":
+        if "__repair_status__" in form_data:
+            new_data["__repair_status__"] = str(form_data.get("__repair_status__", "")).strip().lower()
+        if "__logistics_status__" in form_data:
+            new_data["__logistics_status__"] = str(form_data.get("__logistics_status__", "")).strip().lower()
+        new_data = _apply_order_status_automation(new_data, status_field)
 
     # Once client handoff is confirmed via status, remove temporary partner-issued priority.
     if status_field and status_field in new_data and _status_eq(str(new_data.get(status_field, "")), "Выдан"):
@@ -738,6 +937,8 @@ async def record_update_single_field(
 
     status_field, _, status_colors = _extract_status_settings(module)
     allowed_meta_fields = {"__partner_issued__"}
+    if slug == "orders":
+        allowed_meta_fields.update({"__repair_status__", "__logistics_status__"})
 
     if field not in all_field_names and field not in allowed_meta_fields:
         raise HTTPException(400, "Поле не найдено")
@@ -745,7 +946,7 @@ async def record_update_single_field(
         raise HTTPException(403, "Поле недоступно для редактирования")
 
     if status_field and field != status_field and field not in allowed_meta_fields:
-        raise HTTPException(400, "Inline-обновление разрешено только для статуса и флага выдачи")
+        raise HTTPException(400, "Inline-обновление разрешено только для статусных полей")
 
     result = await db.execute(
         select(DynamicRecord).where(DynamicRecord.id == record_id, DynamicRecord.module_slug == slug)
@@ -763,9 +964,22 @@ async def record_update_single_field(
             raise HTTPException(400, "Флаг выдачи доступен только для статусов 'Готов' и 'Выдан'")
         new_data[field] = str(value).strip().lower() in {"1", "true", "on", "yes"}
     else:
-        new_data[field] = value
+        if field == "__repair_status__":
+            if str(value).strip().lower() not in REPAIR_STATUS_OPTIONS:
+                raise HTTPException(400, "Некорректный repair_status")
+            new_data[field] = str(value).strip().lower()
+        elif field == "__logistics_status__":
+            if str(value).strip().lower() not in LOGISTICS_STATUS_OPTIONS:
+                raise HTTPException(400, "Некорректный logistics_status")
+            new_data[field] = str(value).strip().lower()
+        else:
+            new_data[field] = value
+
         if status_field and field == status_field and _status_eq(str(value), "Выдан"):
             new_data["__partner_issued__"] = False
+
+        if slug == "orders":
+            new_data = _apply_order_status_automation(new_data, status_field)
 
     if slug == "orders":
         await _sync_order_dependencies(db, new_data)
@@ -844,6 +1058,8 @@ async def bulk_update_status(
         new_data[status_field] = value
         if _status_eq(value, "Выдан"):
             new_data["__partner_issued__"] = False
+        if slug == "orders":
+            new_data = _apply_order_status_automation(new_data, status_field)
         if slug == "orders":
             await _sync_order_dependencies(db, new_data)
         record.data = new_data
