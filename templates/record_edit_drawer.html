@@ -57,7 +57,7 @@
             <div class="card-body">
                 <div class="row g-3">
                     <div class="col-12 col-md-6">
-                        <label class="form-label fw-medium mb-1">Repair Status</label>
+                        <label class="form-label fw-medium mb-1">Статус ремонта</label>
                         <select class="form-select" name="__repair_status__">
                             {% for option in repair_status_options %}
                             <option value="{{ option }}" {% if option == current_repair_status %}selected{% endif %}>{{ option }}</option>
@@ -65,10 +65,10 @@
                         </select>
                     </div>
                     <div class="col-12 col-md-6">
-                        <label class="form-label fw-medium mb-1">Logistics Status</label>
+                        <label class="form-label fw-medium mb-1">Статус логистики</label>
                         <select class="form-select" name="__logistics_status__">
                             {% for option in logistics_status_options %}
-                            <option value="{{ option }}" {% if option == current_logistics_status %}selected{% endif %}>{{ option }}</option>
+                            <option value="{{ option }}" {% if option == current_logistics_status %}selected{% endif %}>{{ logistics_status_labels.get(option, option) }}</option>
                             {% endfor %}
                         </select>
                     </div>

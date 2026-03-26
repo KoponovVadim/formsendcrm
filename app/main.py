@@ -49,6 +49,34 @@ def _status_key(value: str) -> str:
     return str(value or "").strip().lower()
 
 
+def _dedupe_order_records(records: list[DynamicRecord], order_no_field: str | None) -> list[DynamicRecord]:
+    if not records:
+        return []
+    if not order_no_field:
+        return records
+
+    dedup: dict[str, DynamicRecord] = {}
+    fallback: list[DynamicRecord] = []
+    for record in records:
+        row_data = dict(record.data or {})
+        order_no = str(row_data.get(order_no_field, "") or "").strip()
+        if not order_no:
+            fallback.append(record)
+            continue
+
+        current = dedup.get(order_no)
+        if current is None:
+            dedup[order_no] = record
+            continue
+
+        current_updated = getattr(current, "updated_at", None)
+        next_updated = getattr(record, "updated_at", None)
+        if next_updated and (not current_updated or next_updated >= current_updated):
+            dedup[order_no] = record
+
+    return list(dedup.values()) + fallback
+
+
 def _is_completed_status(value: str) -> bool:
     return _status_key(value) in {
         "выдан",
@@ -263,14 +291,8 @@ async def dashboard(
     modules = await get_all_modules(db)
     modules = filter_visible_modules_for_user(modules, user)
 
-    # Collect stats per module
     module_stats = []
     module_by_slug = {mod.slug: mod for mod in modules}
-    for mod in modules:
-        count = (await db.execute(
-            select(func.count()).where(DynamicRecord.module_slug == mod.slug)
-        )).scalar() or 0
-        module_stats.append({"module": mod, "count": count})
 
     orders_records = []
     orders_module = module_by_slug.get("orders")
@@ -288,12 +310,24 @@ async def dashboard(
     order_client_field = _find_field_by_candidates(order_field_names, ["Клиент", "фио", "client", "name"])
     order_status_field = _find_field_by_candidates(order_field_names, ["Статус", "статус заказа", "status"])
 
+    dedup_orders_records = _dedupe_order_records(orders_records, order_no_field)
+
+    # Collect stats per module (orders are counted after dedupe by order number).
+    for mod in modules:
+        if mod.slug == "orders":
+            count = len(dedup_orders_records)
+        else:
+            count = (await db.execute(
+                select(func.count()).where(DynamicRecord.module_slug == mod.slug)
+            )).scalar() or 0
+        module_stats.append({"module": mod, "count": count})
+
     open_orders_count = 0
     completed_orders_count = 0
     ready_orders_count = 0
     status_breakdown: dict[str, int] = {}
 
-    for record in orders_records:
+    for record in dedup_orders_records:
         row_data = dict(record.data or {})
         status_value = str(row_data.get(order_status_field or "", "")).strip() if order_status_field else ""
         key = status_value or "Без статуса"
@@ -307,7 +341,7 @@ async def dashboard(
                 ready_orders_count += 1
 
     recent_orders = []
-    for record in orders_records[:8]:
+    for record in dedup_orders_records[:8]:
         row_data = dict(record.data or {})
         recent_orders.append({
             "id": record.id,

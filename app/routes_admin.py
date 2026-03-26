@@ -420,6 +420,20 @@ async def admin_orders(
         )
     ).scalars().all()
 
+    dedup_by_order_no: dict[str, DynamicRecord] = {}
+    records_without_no: list[DynamicRecord] = []
+    for record in records:
+        data = dict(record.data or {})
+        order_no = str(data.get(order_no_field, "") or "").strip() if order_no_field else ""
+        if not order_no:
+            records_without_no.append(record)
+            continue
+        existing = dedup_by_order_no.get(order_no)
+        if existing is None or int(record.row_index or 0) > int(existing.row_index or 0):
+            dedup_by_order_no[order_no] = record
+
+    records = list(dedup_by_order_no.values()) + records_without_no
+
     sql_orders = (await db.execute(select(Order))).scalars().all()
     sql_by_order_no = {str(o.order_no or "").strip(): o for o in sql_orders}
 

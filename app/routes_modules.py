@@ -91,15 +91,6 @@ LOGISTICS_STATUS_LABELS = {
     "delivered": "Доставлен",
 }
 
-REPAIR_STATUS_TRANSITIONS = {
-    "Ожидает доставки в ремонт": {"В ремонте", "Отменён"},
-    "В ремонте": {"Готов", "Отменён"},
-    "Готов": {"Выдан", "В ремонте", "Отменён"},
-    "Выдан": set(),
-    "Отменён": set(),
-}
-
-
 def _normalize_repair_status(value: str) -> str:
     key = _status_key(value)
     mapping = {
@@ -1124,12 +1115,6 @@ async def record_update_single_field(
             normalized_repair = _normalize_repair_status(str(value))
             if normalized_repair not in REPAIR_STATUS_OPTIONS:
                 raise HTTPException(400, "Некорректный repair_status")
-
-            current_repair = _derive_repair_status(new_data, status_field)
-            if current_repair != normalized_repair:
-                allowed_next = REPAIR_STATUS_TRANSITIONS.get(current_repair, set())
-                if normalized_repair not in allowed_next:
-                    raise HTTPException(400, "Некорректный переход статуса")
 
             new_data[field] = normalized_repair
         elif field == "__logistics_status__":
