@@ -47,6 +47,17 @@ DEFAULT_STATUS_COLORS = {
 }
 
 SORT_OPTIONS = {"newest", "oldest", "updated_desc", "updated_asc"}
+COMPLETED_STATUS_KEYS = {
+    "выдан",
+    "отменен",
+    "завершен",
+    "закрыт",
+    "выдан клиенту",
+    "cancelled",
+    "canceled",
+    "completed",
+    "closed",
+}
 
 
 def _find_field_name_by_candidates(field_names: list[str], candidates: list[str]) -> str | None:
@@ -335,19 +346,19 @@ async def module_list(
 
     if status_field:
         status_expr = func.lower(func.coalesce(cast(DynamicRecord.data[status_field], String), ""))
-        issued_priority = case((status_expr == "выдан", 1), else_=0).asc()
+        completion_priority = case((status_expr.in_(tuple(COMPLETED_STATUS_KEYS)), 1), else_=0).asc()
     else:
-        issued_priority = case((DynamicRecord.id > 0, 0), else_=0).asc()
+        completion_priority = case((DynamicRecord.id > 0, 0), else_=0).asc()
 
     # Paginated data
     if sort == "oldest":
-        stmt = stmt.order_by(issued_priority, DynamicRecord.row_index.asc())
+        stmt = stmt.order_by(completion_priority, DynamicRecord.row_index.asc())
     elif sort == "updated_desc":
-        stmt = stmt.order_by(issued_priority, DynamicRecord.updated_at.desc(), DynamicRecord.row_index.desc())
+        stmt = stmt.order_by(completion_priority, DynamicRecord.updated_at.desc(), DynamicRecord.row_index.desc())
     elif sort == "updated_asc":
-        stmt = stmt.order_by(issued_priority, DynamicRecord.updated_at.asc(), DynamicRecord.row_index.asc())
+        stmt = stmt.order_by(completion_priority, DynamicRecord.updated_at.asc(), DynamicRecord.row_index.asc())
     else:
-        stmt = stmt.order_by(issued_priority, DynamicRecord.row_index.desc())
+        stmt = stmt.order_by(completion_priority, DynamicRecord.row_index.desc())
 
     stmt = stmt.offset(offset).limit(per_page)
     records = (await db.execute(stmt)).scalars().all()
@@ -679,6 +690,78 @@ async def record_update_single_field(
         "ok": True,
         "row_bg": _row_bg_for_status(str(new_data.get(status_field, "")), status_colors) if status_field else "",
     })
+
+
+@router.post("/modules/{slug}/bulk/status")
+async def bulk_update_status(
+    request: Request,
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    module = await get_module_by_slug(db, slug)
+    if not module:
+        raise HTTPException(404)
+
+    permissions = get_user_permissions(user)
+    all_field_names = [f["name"] for f in module.fields_schema]
+    editable_fields = get_editable_fields(permissions, slug, all_field_names, user.is_superuser)
+    status_field, status_options, _ = _extract_status_settings(module)
+
+    if not status_field or status_field not in editable_fields:
+        raise HTTPException(403, "Массовое обновление статуса недоступно")
+
+    form_data = await request.form()
+    field = str(form_data.get("field", "")).strip()
+    value = str(form_data.get("value", "")).strip()
+    record_ids_raw = form_data.getlist("record_ids")
+
+    if field != status_field:
+        raise HTTPException(400, "Можно обновлять только поле статуса")
+    if not value:
+        raise HTTPException(400, "Статус не указан")
+
+    allowed_statuses = {_status_key(opt) for opt in status_options}
+    if allowed_statuses and _status_key(value) not in allowed_statuses:
+        raise HTTPException(400, "Недопустимый статус")
+
+    record_ids: list[int] = []
+    for raw in record_ids_raw:
+        text = str(raw or "").strip()
+        if text.isdigit():
+            record_ids.append(int(text))
+
+    if not record_ids:
+        raise HTTPException(400, "Не выбраны записи")
+
+    result = await db.execute(
+        select(DynamicRecord).where(
+            DynamicRecord.module_slug == slug,
+            DynamicRecord.id.in_(record_ids),
+        )
+    )
+    records = result.scalars().all()
+    if not records:
+        raise HTTPException(404, "Записи не найдены")
+
+    now = datetime.now(timezone.utc)
+    for record in records:
+        new_data = dict(record.data or {})
+        new_data[status_field] = value
+        if _status_eq(value, "Выдан"):
+            new_data["__partner_issued__"] = False
+        record.data = new_data
+        record.updated_at = now
+
+    await db.commit()
+
+    try:
+        from app.sync_service import push_module
+        await push_module(db, module)
+    except Exception:
+        pass
+
+    return JSONResponse({"ok": True, "updated": len(records)})
 
 
 @router.post("/modules/{slug}/record/new", response_class=HTMLResponse)

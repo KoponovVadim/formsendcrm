@@ -554,7 +554,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const field = selectEl.dataset.field;
         const value = selectEl.value;
         const previousValue = selectEl.dataset.previousValue || '';
-        const rowBg = toRgba(getSelectedOptionColor(selectEl), 0.16);
+        const rowBg = toRgba(getSelectedOptionColor(selectEl), 0.28);
 
         applyRowStatusColor(selectEl, rowBg);
 
@@ -579,7 +579,7 @@ document.addEventListener('DOMContentLoaded', function () {
             refreshRecordsContainer(slug);
         } catch (err) {
             selectEl.value = previousValue;
-            applyRowStatusColor(selectEl, toRgba(getSelectedOptionColor(selectEl), 0.16));
+            applyRowStatusColor(selectEl, toRgba(getSelectedOptionColor(selectEl), 0.28));
             alert('Не удалось сохранить статус. Обновите страницу и попробуйте снова.');
         }
     }
@@ -618,11 +618,102 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!selectEl.dataset.previousValue) {
                 selectEl.dataset.previousValue = selectEl.value || '';
             }
-            applyRowStatusColor(selectEl, toRgba(getSelectedOptionColor(selectEl), 0.16));
+            applyRowStatusColor(selectEl, toRgba(getSelectedOptionColor(selectEl), 0.28));
         });
     }
 
+    function getOrdersBulkPanel() {
+        return document.getElementById('orders-bulk-status-panel');
+    }
+
+    function getOrderRowChecks() {
+        const container = document.getElementById('records-container') || document;
+        return Array.from(container.querySelectorAll('.js-order-bulk-check'));
+    }
+
+    function updateOrdersBulkState() {
+        const panel = getOrdersBulkPanel();
+        if (!panel) return;
+
+        const applyBtn = panel.querySelector('.js-orders-bulk-status-apply');
+        const selectedCountEl = panel.querySelector('.js-orders-selected-count');
+        const checks = getOrderRowChecks();
+        const selected = checks.filter(function (input) { return input.checked; }).length;
+
+        if (selectedCountEl) selectedCountEl.textContent = String(selected);
+        if (applyBtn) applyBtn.disabled = selected === 0;
+
+        const selectAll = document.querySelector('.js-order-select-all');
+        if (selectAll) {
+            selectAll.checked = checks.length > 0 && selected === checks.length;
+            selectAll.indeterminate = selected > 0 && selected < checks.length;
+        }
+    }
+
+    function initOrdersBulkStatus(_root) {
+        if (!document.body.dataset.ordersBulkBound) {
+            document.body.addEventListener('change', function (event) {
+                if (event.target.closest('.js-order-bulk-check') || event.target.closest('.js-order-select-all')) {
+                    const selectAll = event.target.closest('.js-order-select-all');
+                    if (selectAll) {
+                        getOrderRowChecks().forEach(function (input) {
+                            input.checked = selectAll.checked;
+                        });
+                    }
+                    updateOrdersBulkState();
+                }
+            });
+
+            document.body.addEventListener('click', async function (event) {
+                const applyBtn = event.target.closest('.js-orders-bulk-status-apply');
+                if (!applyBtn) return;
+
+                const panel = getOrdersBulkPanel();
+                if (!panel) return;
+                const slug = panel.dataset.slug;
+                const field = panel.dataset.field;
+                const statusSelect = panel.querySelector('.js-orders-bulk-status-value');
+
+                const selectedIds = getOrderRowChecks()
+                    .filter(function (input) { return input.checked; })
+                    .map(function (input) { return input.dataset.recordId; })
+                    .filter(Boolean);
+
+                if (!selectedIds.length) {
+                    updateOrdersBulkState();
+                    return;
+                }
+
+                applyBtn.disabled = true;
+                try {
+                    const formData = new FormData();
+                    formData.append('field', field || '');
+                    formData.append('value', statusSelect ? statusSelect.value : '');
+                    selectedIds.forEach(function (id) { formData.append('record_ids', id); });
+
+                    const response = await fetch(`/modules/${slug}/bulk/status`, {
+                        method: 'POST',
+                        body: formData,
+                        headers: { 'HX-Request': 'true' }
+                    });
+                    if (!response.ok) {
+                        throw new Error('bulk_status_failed');
+                    }
+                    refreshRecordsContainer(slug);
+                } catch (_err) {
+                    alert('Не удалось массово обновить статус.');
+                    updateOrdersBulkState();
+                }
+            });
+
+            document.body.dataset.ordersBulkBound = '1';
+        }
+
+        updateOrdersBulkState();
+    }
+
     initStatusSelects(document);
+    initOrdersBulkStatus(document);
 
     // Re-init Bootstrap modal after HTMX swap
     document.body.addEventListener('htmx:afterSwap', function (event) {
@@ -637,6 +728,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         if (event.detail.target.id === 'records-container') {
             initStatusSelects(event.detail.target);
+            initOrdersBulkStatus(event.detail.target);
         }
     });
 

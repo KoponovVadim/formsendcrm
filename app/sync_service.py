@@ -6,10 +6,85 @@ from datetime import datetime, timezone
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import DynamicRecord, ModuleConfig, SyncLog
+from models.crm import Order, SystemSetting
 from app import sheets_adapter
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+ORDER_NUMBER_FIELD_CANDIDATES = (
+    "№ заказа",
+    "номер заказа",
+    "номер",
+    "order_no",
+    "order number",
+)
+
+
+def _find_order_number_field(fields_schema: list | None) -> str | None:
+    field_names = [str(f.get("name", "")).strip() for f in (fields_schema or []) if isinstance(f, dict)]
+    lowered_map = {name.lower(): name for name in field_names if name}
+
+    for candidate in ORDER_NUMBER_FIELD_CANDIDATES:
+        if candidate in lowered_map:
+            return lowered_map[candidate]
+
+    for name in field_names:
+        lowered = name.lower()
+        if "заказ" in lowered and ("№" in lowered or "номер" in lowered):
+            return name
+        if lowered in {"order", "order id", "order_no"}:
+            return name
+
+    return None
+
+
+async def _generate_next_order_no(db: AsyncSession, reserved_numbers: set[str]) -> str:
+    key = "orders_next_sequence"
+    setting = (
+        await db.execute(
+            select(SystemSetting).where(SystemSetting.key == key).with_for_update()
+        )
+    ).scalar_one_or_none()
+
+    if setting and str(setting.value or "").strip().isdigit():
+        next_sequence = int(str(setting.value).strip())
+    else:
+        order_numbers = (await db.execute(select(Order.order_no).where(Order.order_no.like("JX-%")))).scalars().all()
+        dynamic_numbers = (
+            await db.execute(select(DynamicRecord.data).where(DynamicRecord.module_slug == "orders"))
+        ).scalars().all()
+
+        max_sequence = 0
+        for raw in order_numbers:
+            value = str(raw or "").strip()
+            if value.startswith("JX-") and value[3:].isdigit():
+                max_sequence = max(max_sequence, int(value[3:]))
+
+        for row_data in dynamic_numbers:
+            if not isinstance(row_data, dict):
+                continue
+            for value in row_data.values():
+                text = str(value or "").strip()
+                if text.startswith("JX-") and text[3:].isdigit():
+                    max_sequence = max(max_sequence, int(text[3:]))
+
+        next_sequence = max_sequence + 1
+
+    while True:
+        candidate = f"JX-{next_sequence:08d}"
+        if candidate not in reserved_numbers:
+            break
+        next_sequence += 1
+
+    if setting:
+        setting.value = str(next_sequence + 1)
+    else:
+        db.add(SystemSetting(key=key, value=str(next_sequence + 1)))
+
+    await db.flush()
+    reserved_numbers.add(candidate)
+    return candidate
 
 
 def _normalize_row_data_by_schema(data: dict | None, fields_schema: list | None) -> dict:
@@ -37,6 +112,21 @@ async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
             result["message"] = "No data returned from Google Sheets"
             await _log_sync(db, module.slug, "pull", "success", 0, result["message"])
             return result
+
+        if module.slug == "orders":
+            order_number_field = _find_order_number_field(module.fields_schema)
+            if order_number_field:
+                reserved_numbers: set[str] = set()
+                for row in rows:
+                    value = str((row or {}).get(order_number_field, "") or "").strip()
+                    if value:
+                        reserved_numbers.add(value)
+
+                for row in rows:
+                    current_value = str((row or {}).get(order_number_field, "") or "").strip()
+                    if current_value:
+                        continue
+                    row[order_number_field] = await _generate_next_order_no(db, reserved_numbers)
 
         headers = [f["name"] for f in module.fields_schema]
 
