@@ -14,6 +14,7 @@ from app.models import DynamicRecord, ModuleConfig
 from app.auth import (
     get_current_user, get_user_permissions, check_module_visible,
     get_visible_fields, get_editable_fields, filter_visible_modules_for_user, get_user_specializations,
+    can_manage_logistics, can_manage_services,
 )
 from app.schema_loader import get_all_modules, get_module_by_slug
 from models.crm import Executor, Location
@@ -133,6 +134,15 @@ def _extract_user_point_id(user) -> int | None:
     except ValueError:
         return None
     return value if value > 0 else None
+
+
+def _should_limit_orders_by_point(user) -> bool:
+    if getattr(user, "is_superuser", False):
+        return False
+    # Users with broader operations permissions should see full order flow.
+    if can_manage_logistics(user) or can_manage_services(user):
+        return False
+    return True
 
 
 def _get_order_point_and_master_fields(all_fields: list[str]) -> tuple[str | None, str | None]:
@@ -693,11 +703,22 @@ async def module_list(
             or_(*[partner_expr.like(f"%{spec}%") for spec in lowered_specializations])
         )
 
-    if slug == "orders" and not user.is_superuser:
+    if slug == "orders" and _should_limit_orders_by_point(user):
         user_point_id = _extract_user_point_id(user)
         if user_point_id:
+            point_filters = []
             point_expr = func.coalesce(cast(DynamicRecord.data["__point_id__"], String), "")
-            stmt = stmt.where(point_expr == str(user_point_id))
+            point_filters.append(point_expr == str(user_point_id))
+
+            if point_field:
+                location = (
+                    await db.execute(select(Location).where(Location.id == int(user_point_id)))
+                ).scalar_one_or_none()
+                if location and str(location.name or "").strip():
+                    legacy_point_expr = func.lower(func.coalesce(cast(DynamicRecord.data[point_field], String), ""))
+                    point_filters.append(legacy_point_expr == str(location.name).strip().lower())
+
+            stmt = stmt.where(or_(*point_filters))
 
     if sort not in SORT_OPTIONS:
         sort = "newest"

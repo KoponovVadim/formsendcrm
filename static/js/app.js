@@ -710,6 +710,11 @@ document.addEventListener('DOMContentLoaded', function () {
         let draggedCard = null;
         let dragSourceStatus = '';
         let touchCard = null;
+        let touchDragEnabled = false;
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let touchPressTimer = null;
+        let suppressCardClickUntil = 0;
         let activeTouchDropzone = null;
 
         function clearDropHighlights() {
@@ -727,6 +732,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!recordId || !slug || currentStatus === targetStatus) return;
 
             try {
+                suppressCardClickUntil = Date.now() + 500;
                 await saveInlineField(slug, recordId, '__repair_status__', targetStatus);
                 refreshRecordsContainer(slug);
             } catch (_err) {
@@ -741,6 +747,7 @@ document.addEventListener('DOMContentLoaded', function () {
             draggedCard = card;
             dragSourceStatus = card.dataset.repairStatus || '';
             card.classList.add('is-dragging');
+            suppressCardClickUntil = Date.now() + 500;
             if (event.dataTransfer) {
                 event.dataTransfer.effectAllowed = 'move';
                 event.dataTransfer.setData('text/plain', card.dataset.recordId || '');
@@ -776,13 +783,38 @@ document.addEventListener('DOMContentLoaded', function () {
         kanban.addEventListener('touchstart', function (event) {
             const card = event.target.closest('.js-kanban-card');
             if (!card) return;
+
+            if (!event.touches || !event.touches[0]) return;
+            const touch = event.touches[0];
             touchCard = card;
-            card.classList.add('is-touch-dragging');
+            touchDragEnabled = false;
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+            if (touchPressTimer) {
+                window.clearTimeout(touchPressTimer);
+            }
+            touchPressTimer = window.setTimeout(function () {
+                if (!touchCard) return;
+                touchDragEnabled = true;
+                touchCard.classList.add('is-touch-dragging');
+                suppressCardClickUntil = Date.now() + 600;
+            }, 220);
         }, { passive: true });
 
         kanban.addEventListener('touchmove', function (event) {
             if (!touchCard || !event.touches || !event.touches[0]) return;
             const touch = event.touches[0];
+
+            if (!touchDragEnabled) {
+                const dx = Math.abs(touch.clientX - touchStartX);
+                const dy = Math.abs(touch.clientY - touchStartY);
+                if (dx + dy > 10 && touchPressTimer) {
+                    window.clearTimeout(touchPressTimer);
+                    touchPressTimer = null;
+                }
+                return;
+            }
+
             const target = document.elementFromPoint(touch.clientX, touch.clientY);
             const zone = target ? target.closest('.js-kanban-dropzone') : null;
             clearDropHighlights();
@@ -794,17 +826,42 @@ document.addEventListener('DOMContentLoaded', function () {
         }, { passive: false });
 
         kanban.addEventListener('touchend', function () {
+            if (touchPressTimer) {
+                window.clearTimeout(touchPressTimer);
+                touchPressTimer = null;
+            }
             if (!touchCard) return;
             const card = touchCard;
             card.classList.remove('is-touch-dragging');
             const zone = activeTouchDropzone;
             touchCard = null;
+            touchDragEnabled = false;
             clearDropHighlights();
             if (zone) {
                 const targetStatus = zone.dataset.repairStatus || '';
                 moveCard(card, targetStatus);
             }
         });
+
+        kanban.addEventListener('touchcancel', function () {
+            if (touchPressTimer) {
+                window.clearTimeout(touchPressTimer);
+                touchPressTimer = null;
+            }
+            if (touchCard) {
+                touchCard.classList.remove('is-touch-dragging');
+            }
+            touchCard = null;
+            touchDragEnabled = false;
+            clearDropHighlights();
+        });
+
+        kanban.addEventListener('click', function (event) {
+            if (Date.now() < suppressCardClickUntil && event.target.closest('.js-kanban-card')) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+        }, true);
 
         kanban.dataset.dndBound = '1';
     }
