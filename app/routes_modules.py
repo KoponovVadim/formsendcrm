@@ -292,6 +292,94 @@ def _row_bg_for_status(status_value: str, status_colors: dict[str, str]) -> str:
     return ""
 
 
+async def _sync_order_dependencies(db: AsyncSession, order_data: dict) -> None:
+    """Propagate shared order fields to related modules by order number."""
+    if not isinstance(order_data, dict):
+        return
+
+    order_module = await get_module_by_slug(db, "orders")
+    if not order_module:
+        return
+
+    order_field_names = [f.get("name", "") for f in (order_module.fields_schema or []) if isinstance(f, dict)]
+    order_no_field = _find_field_name_by_candidates(order_field_names, ["№ заказа", "номер заказа", "номер", "заказ"])
+    order_no = str(order_data.get(order_no_field or "", "")).strip()
+    if not order_no:
+        return
+
+    source_order_field = _find_field_name_by_candidates(order_field_names, ["№ заказа", "номер заказа", "номер", "заказ"])
+    source_client_field = _find_field_name_by_candidates(order_field_names, ["Клиент", "ФИО", "client", "name"])
+    source_status_field = _find_field_name_by_candidates(order_field_names, ["Статус", "Статус заказа", "status"])
+    source_accepted_field = _find_field_name_by_candidates(order_field_names, ["Дата приёма", "Дата приема", "accept_date", "accepted_at"])
+    source_device_field = _find_field_name_by_candidates(order_field_names, ["Устройство", "device"])
+    source_issue_field = _find_field_name_by_candidates(order_field_names, ["Неисправность", "проблема", "issue"])
+    source_master_field = _find_field_name_by_candidates(order_field_names, ["Мастер", "исполнитель", "master"])
+    source_deadline_field = _find_field_name_by_candidates(order_field_names, ["Дедлайн", "deadline"])
+    source_issued_field = _find_field_name_by_candidates(order_field_names, ["Дата выдачи", "выдача", "issued", "issue date"])
+    source_warranty_field = _find_field_name_by_candidates(order_field_names, ["Гарантия до", "гарантия", "warranty"])
+
+    dependent_modules = ["clients", "finance", "warranty"]
+    now = datetime.now(timezone.utc)
+
+    for dependent_slug in dependent_modules:
+        dependent_module = await get_module_by_slug(db, dependent_slug)
+        if not dependent_module:
+            continue
+
+        target_field_names = [f.get("name", "") for f in (dependent_module.fields_schema or []) if isinstance(f, dict)]
+        target_order_field = _find_field_name_by_candidates(target_field_names, ["№ заказа", "номер заказа", "номер", "заказ"])
+        if not target_order_field:
+            continue
+
+        related_records = (
+            await db.execute(
+                select(DynamicRecord).where(
+                    DynamicRecord.module_slug == dependent_slug,
+                    cast(DynamicRecord.data[target_order_field], String) == order_no,
+                )
+            )
+        ).scalars().all()
+
+        if not related_records:
+            continue
+
+        target_client_field = _find_field_name_by_candidates(target_field_names, ["ФИО название", "Клиент", "client", "name"])
+        target_status_field = _find_field_name_by_candidates(target_field_names, ["Статус", "Статус заказа", "status"])
+        target_accepted_field = _find_field_name_by_candidates(target_field_names, ["Дата приёма", "Дата приема", "accept_date", "accepted_at"])
+        target_device_field = _find_field_name_by_candidates(target_field_names, ["Устройство", "device"])
+        target_issue_field = _find_field_name_by_candidates(target_field_names, ["Неисправность", "проблема", "issue"])
+        target_master_field = _find_field_name_by_candidates(target_field_names, ["Мастер", "исполнитель", "master"])
+        target_deadline_field = _find_field_name_by_candidates(target_field_names, ["Дедлайн", "deadline"])
+        target_issued_field = _find_field_name_by_candidates(target_field_names, ["Дата выдачи", "выдача", "issued", "issue date"])
+        target_warranty_field = _find_field_name_by_candidates(target_field_names, ["Гарантия до", "гарантия", "warranty"])
+
+        for related_record in related_records:
+            related_data = dict(related_record.data or {})
+            related_data[target_order_field] = order_no
+
+            if source_client_field and target_client_field:
+                related_data[target_client_field] = str(order_data.get(source_client_field, "") or "")
+            if source_status_field and target_status_field:
+                related_data[target_status_field] = str(order_data.get(source_status_field, "") or "")
+            if source_accepted_field and target_accepted_field:
+                related_data[target_accepted_field] = str(order_data.get(source_accepted_field, "") or "")
+            if source_device_field and target_device_field:
+                related_data[target_device_field] = str(order_data.get(source_device_field, "") or "")
+            if source_issue_field and target_issue_field:
+                related_data[target_issue_field] = str(order_data.get(source_issue_field, "") or "")
+            if source_master_field and target_master_field:
+                related_data[target_master_field] = str(order_data.get(source_master_field, "") or "")
+            if source_deadline_field and target_deadline_field:
+                related_data[target_deadline_field] = str(order_data.get(source_deadline_field, "") or "")
+            if source_issued_field and target_issued_field:
+                related_data[target_issued_field] = str(order_data.get(source_issued_field, "") or "")
+            if source_warranty_field and target_warranty_field:
+                related_data[target_warranty_field] = str(order_data.get(source_warranty_field, "") or "")
+
+            related_record.data = related_data
+            related_record.updated_at = now
+
+
 @router.get("/modules/{slug}", response_class=HTMLResponse)
 async def module_list(
     request: Request,
@@ -489,6 +577,9 @@ async def record_update(
     if status_field and status_field in new_data and _status_eq(str(new_data.get(status_field, "")), "Выдан"):
         new_data["__partner_issued__"] = False
 
+    if slug == "orders":
+        await _sync_order_dependencies(db, new_data)
+
     record.data = new_data
     record.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -675,6 +766,9 @@ async def record_update_single_field(
         new_data[field] = value
         if status_field and field == status_field and _status_eq(str(value), "Выдан"):
             new_data["__partner_issued__"] = False
+
+    if slug == "orders":
+        await _sync_order_dependencies(db, new_data)
     record.data = new_data
     record.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -750,6 +844,8 @@ async def bulk_update_status(
         new_data[status_field] = value
         if _status_eq(value, "Выдан"):
             new_data["__partner_issued__"] = False
+        if slug == "orders":
+            await _sync_order_dependencies(db, new_data)
         record.data = new_data
         record.updated_at = now
 

@@ -26,6 +26,18 @@ SCOPES = [
 _client: Optional[object] = None
 
 
+def _column_label(index_1_based: int) -> str:
+    """Convert 1-based column index to Excel letters (1->A, 27->AA)."""
+    if index_1_based <= 0:
+        return "A"
+    value = index_1_based
+    letters = []
+    while value > 0:
+        value, rem = divmod(value - 1, 26)
+        letters.append(chr(65 + rem))
+    return "".join(reversed(letters))
+
+
 def _get_client():
     global _client
     if _client is not None:
@@ -107,39 +119,73 @@ def get_worksheet_data(sheet_name: str) -> list[dict]:
     return records
 
 
-def update_worksheet_data(sheet_name: str, records: list[dict]):
-    """Overwrite worksheet with records (preserving headers)."""
+def update_worksheet_data(sheet_name: str, records: list[dict], headers: list[str] | None = None):
+    """Overwrite worksheet with records, preserving and extending headers when needed."""
     ss = _get_spreadsheet()
     if ss is None:
         return
     ws = _retry(lambda: ss.worksheet(sheet_name))
-    headers = _retry(lambda: ws.row_values(1))
-    if not headers:
+
+    sheet_headers = [str(h).strip() for h in _retry(lambda: ws.row_values(1)) if str(h).strip()]
+    desired_headers = [str(h).strip() for h in (headers or []) if str(h).strip()]
+
+    if not desired_headers:
+        desired_headers = list(sheet_headers)
+
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        for key in rec.keys():
+            normalized_key = str(key).strip()
+            if normalized_key and normalized_key not in desired_headers:
+                desired_headers.append(normalized_key)
+
+    if not desired_headers:
         return
 
-    # Clear data rows (keep header row)
-    _retry(lambda: ws.resize(rows=1))
-    _retry(lambda: ws.resize(rows=len(records) + 1))
+    max_col = _column_label(len(desired_headers))
+
+    # Resize and write header row to keep column order deterministic.
+    _retry(lambda: ws.resize(rows=max(1, len(records) + 1), cols=max(1, len(desired_headers))))
+    _retry(lambda: ws.update(f"A1:{max_col}1", [desired_headers]))
 
     if not records:
         return
 
     rows = []
     for rec in records:
-        row = [str(rec.get(h, "")) for h in headers]
+        src = rec if isinstance(rec, dict) else {}
+        row = [str(src.get(h, "")) for h in desired_headers]
         rows.append(row)
 
-    cell_range = f"A2:{chr(64 + len(headers))}{len(records) + 1}"
+    cell_range = f"A2:{max_col}{len(records) + 1}"
     _retry(lambda: ws.update(cell_range, rows))
 
 
-def update_single_row(sheet_name: str, row_index: int, data: dict):
-    """Update a single row (1-based, row 1 = header)."""
+def update_single_row(sheet_name: str, row_index: int, data: dict, headers: list[str] | None = None):
+    """Update a single row (1-based, row 1 = header), extending headers safely."""
     ss = _get_spreadsheet()
     if ss is None:
         return
     ws = _retry(lambda: ss.worksheet(sheet_name))
-    headers = _retry(lambda: ws.row_values(1))
-    row_values = [str(data.get(h, "")) for h in headers]
-    cell_range = f"A{row_index}:{chr(64 + len(headers))}{row_index}"
+    sheet_headers = [str(h).strip() for h in _retry(lambda: ws.row_values(1)) if str(h).strip()]
+    desired_headers = [str(h).strip() for h in (headers or []) if str(h).strip()]
+    if not desired_headers:
+        desired_headers = list(sheet_headers)
+
+    source = data if isinstance(data, dict) else {}
+    for key in source.keys():
+        normalized_key = str(key).strip()
+        if normalized_key and normalized_key not in desired_headers:
+            desired_headers.append(normalized_key)
+
+    if not desired_headers:
+        return
+
+    max_col = _column_label(len(desired_headers))
+    _retry(lambda: ws.resize(rows=max(row_index, 1), cols=max(1, len(desired_headers))))
+    _retry(lambda: ws.update(f"A1:{max_col}1", [desired_headers]))
+
+    row_values = [str(source.get(h, "")) for h in desired_headers]
+    cell_range = f"A{row_index}:{max_col}{row_index}"
     _retry(lambda: ws.update(cell_range, [row_values]))

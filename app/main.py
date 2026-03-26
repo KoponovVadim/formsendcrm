@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func
+import re
 
 from app.config import settings
 from app.database import create_tables, async_session
@@ -29,6 +30,51 @@ import models  # noqa: F401
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _find_field_by_candidates(field_names: list[str], candidates: list[str]) -> str | None:
+    lowered_map = {str(name).strip().lower(): name for name in field_names if str(name).strip()}
+    for candidate in candidates:
+        key = str(candidate).strip().lower()
+        if key in lowered_map:
+            return lowered_map[key]
+    for name in field_names:
+        lowered = str(name).strip().lower()
+        if any(str(candidate).strip().lower() in lowered for candidate in candidates):
+            return name
+    return None
+
+
+def _status_key(value: str) -> str:
+    return str(value or "").strip().lower()
+
+
+def _is_completed_status(value: str) -> bool:
+    return _status_key(value) in {
+        "выдан",
+        "отменен",
+        "завершен",
+        "закрыт",
+        "выдан клиенту",
+        "completed",
+        "closed",
+        "cancelled",
+        "canceled",
+    }
+
+
+def _parse_money(value) -> float:
+    text = str(value or "").strip().replace(" ", "").replace(",", ".")
+    if not text:
+        return 0.0
+    cleaned = re.sub(r"[^0-9.\-]", "", text)
+    if cleaned.count(".") > 1:
+        first_dot = cleaned.find(".")
+        cleaned = cleaned[:first_dot + 1] + cleaned[first_dot + 1 :].replace(".", "")
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0.0
 
 
 def _build_reception_role_permissions_from_modules(modules: list[ModuleConfig]) -> dict:
@@ -213,17 +259,110 @@ async def dashboard(
 
     # Collect stats per module
     module_stats = []
+    module_by_slug = {mod.slug: mod for mod in modules}
     for mod in modules:
         count = (await db.execute(
             select(func.count()).where(DynamicRecord.module_slug == mod.slug)
         )).scalar() or 0
         module_stats.append({"module": mod, "count": count})
 
+    orders_records = []
+    orders_module = module_by_slug.get("orders")
+    if orders_module:
+        orders_records = (
+            await db.execute(
+                select(DynamicRecord)
+                .where(DynamicRecord.module_slug == "orders")
+                .order_by(DynamicRecord.updated_at.desc(), DynamicRecord.row_index.desc())
+            )
+        ).scalars().all()
+
+    order_field_names = [f.get("name", "") for f in ((orders_module.fields_schema if orders_module else []) or []) if isinstance(f, dict)]
+    order_no_field = _find_field_by_candidates(order_field_names, ["№ заказа", "номер заказа", "номер", "order_no"])
+    order_client_field = _find_field_by_candidates(order_field_names, ["Клиент", "фио", "client", "name"])
+    order_status_field = _find_field_by_candidates(order_field_names, ["Статус", "статус заказа", "status"])
+
+    open_orders_count = 0
+    completed_orders_count = 0
+    ready_orders_count = 0
+    status_breakdown: dict[str, int] = {}
+
+    for record in orders_records:
+        row_data = dict(record.data or {})
+        status_value = str(row_data.get(order_status_field or "", "")).strip() if order_status_field else ""
+        key = status_value or "Без статуса"
+        status_breakdown[key] = status_breakdown.get(key, 0) + 1
+
+        if _is_completed_status(status_value):
+            completed_orders_count += 1
+        else:
+            open_orders_count += 1
+            if _status_key(status_value) in {"готов", "ожидает выдачи", "едет на выдачу"}:
+                ready_orders_count += 1
+
+    recent_orders = []
+    for record in orders_records[:8]:
+        row_data = dict(record.data or {})
+        recent_orders.append({
+            "id": record.id,
+            "order_no": str(row_data.get(order_no_field or "", "") or "-").strip() or "-",
+            "client": str(row_data.get(order_client_field or "", "") or "").strip() or "-",
+            "status": str(row_data.get(order_status_field or "", "") or "").strip() or "Без статуса",
+            "updated_at": record.updated_at,
+        })
+
+    finance_total_profit = 0.0
+    finance_module = module_by_slug.get("finance")
+    if finance_module:
+        finance_field_names = [f.get("name", "") for f in (finance_module.fields_schema or []) if isinstance(f, dict)]
+        profit_field = _find_field_by_candidates(finance_field_names, ["Чистая прибыль", "прибыль", "profit"])
+        if profit_field:
+            finance_records = (
+                await db.execute(select(DynamicRecord).where(DynamicRecord.module_slug == "finance"))
+            ).scalars().all()
+            for record in finance_records:
+                finance_total_profit += _parse_money((record.data or {}).get(profit_field, 0))
+
+    supplies_total_cost = 0.0
+    supplies_module = module_by_slug.get("supplies")
+    if supplies_module:
+        supplies_field_names = [f.get("name", "") for f in (supplies_module.fields_schema or []) if isinstance(f, dict)]
+        supplies_cost_field = _find_field_by_candidates(supplies_field_names, ["Стоимость", "себестоимость", "cost"])
+        if supplies_cost_field:
+            supplies_records = (
+                await db.execute(select(DynamicRecord).where(DynamicRecord.module_slug == "supplies"))
+            ).scalars().all()
+            for record in supplies_records:
+                supplies_total_cost += _parse_money((record.data or {}).get(supplies_cost_field, 0))
+
+    warranty_open_count = 0
+    warranty_module = module_by_slug.get("warranty")
+    if warranty_module:
+        warranty_field_names = [f.get("name", "") for f in (warranty_module.fields_schema or []) if isinstance(f, dict)]
+        warranty_status_field = _find_field_by_candidates(warranty_field_names, ["Статус", "status"])
+        warranty_records = (
+            await db.execute(select(DynamicRecord).where(DynamicRecord.module_slug == "warranty"))
+        ).scalars().all()
+        for record in warranty_records:
+            status_value = str((record.data or {}).get(warranty_status_field or "", "")).strip() if warranty_status_field else ""
+            if not _is_completed_status(status_value):
+                warranty_open_count += 1
+
+    top_statuses = sorted(status_breakdown.items(), key=lambda item: item[1], reverse=True)[:6]
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "user": user,
         "modules": modules,
         "module_stats": module_stats,
+        "open_orders_count": open_orders_count,
+        "completed_orders_count": completed_orders_count,
+        "ready_orders_count": ready_orders_count,
+        "warranty_open_count": warranty_open_count,
+        "finance_total_profit": finance_total_profit,
+        "supplies_total_cost": supplies_total_cost,
+        "recent_orders": recent_orders,
+        "top_statuses": top_statuses,
     })
 
 

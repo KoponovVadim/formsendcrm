@@ -20,6 +20,13 @@ ORDER_NUMBER_FIELD_CANDIDATES = (
     "order number",
 )
 
+STATUS_FIELD_CANDIDATES = (
+    "статус",
+    "статус заказа",
+    "status",
+    "order status",
+)
+
 
 def _find_order_number_field(fields_schema: list | None) -> str | None:
     field_names = [str(f.get("name", "")).strip() for f in (fields_schema or []) if isinstance(f, dict)]
@@ -37,6 +44,29 @@ def _find_order_number_field(fields_schema: list | None) -> str | None:
             return name
 
     return None
+
+
+def _find_status_field(fields_schema: list | None) -> str | None:
+    field_names = [str(f.get("name", "")).strip() for f in (fields_schema or []) if isinstance(f, dict)]
+    lowered_map = {name.lower(): name for name in field_names if name}
+
+    for candidate in STATUS_FIELD_CANDIDATES:
+        if candidate in lowered_map:
+            return lowered_map[candidate]
+
+    for name in field_names:
+        lowered = name.lower()
+        if "статус" in lowered and "оплат" not in lowered:
+            return name
+
+    return None
+
+
+def _normalize_order_status(value: str | None) -> str:
+    current = str(value or "").strip()
+    if current.lower() == "в работе":
+        return "В ремонте"
+    return current
 
 
 async def _generate_next_order_no(db: AsyncSession, reserved_numbers: set[str]) -> str:
@@ -87,14 +117,25 @@ async def _generate_next_order_no(db: AsyncSession, reserved_numbers: set[str]) 
     return candidate
 
 
-def _normalize_row_data_by_schema(data: dict | None, fields_schema: list | None) -> dict:
+def _normalize_row_data_by_schema(data: dict | None, fields_schema: list | None, module_slug: str = "") -> dict:
     source = data if isinstance(data, dict) else {}
     field_names = [str(f.get("name", "")).strip() for f in (fields_schema or []) if isinstance(f, dict)]
     if not field_names:
-        return dict(source)
-    normalized: dict[str, str] = {}
-    for field_name in field_names:
-        normalized[field_name] = str(source.get(field_name, "")) if source.get(field_name) is not None else ""
+        normalized = dict(source)
+    else:
+        normalized: dict[str, str] = {}
+        for field_name in field_names:
+            normalized[field_name] = str(source.get(field_name, "")) if source.get(field_name) is not None else ""
+        for key, value in source.items():
+            normalized_key = str(key).strip()
+            if normalized_key and normalized_key not in normalized:
+                normalized[normalized_key] = str(value) if value is not None else ""
+
+    if module_slug == "orders":
+        status_field = _find_status_field(fields_schema)
+        if status_field and status_field in normalized:
+            normalized[status_field] = _normalize_order_status(normalized.get(status_field, ""))
+
     return normalized
 
 
@@ -115,6 +156,7 @@ async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
 
         if module.slug == "orders":
             order_number_field = _find_order_number_field(module.fields_schema)
+            status_field = _find_status_field(module.fields_schema)
             if order_number_field:
                 reserved_numbers: set[str] = set()
                 for row in rows:
@@ -128,7 +170,18 @@ async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
                         continue
                     row[order_number_field] = await _generate_next_order_no(db, reserved_numbers)
 
-        headers = [f["name"] for f in module.fields_schema]
+            if status_field:
+                for row in rows:
+                    row[status_field] = _normalize_order_status((row or {}).get(status_field, ""))
+
+        headers = [str(f.get("name", "")).strip() for f in (module.fields_schema or []) if isinstance(f, dict) and str(f.get("name", "")).strip()]
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            for key in row.keys():
+                normalized_key = str(key).strip()
+                if normalized_key and normalized_key not in headers:
+                    headers.append(normalized_key)
 
         # Delete existing records for this module
         await db.execute(
@@ -176,8 +229,9 @@ async def push_module(db: AsyncSession, module: ModuleConfig) -> dict:
             await _log_sync(db, module.slug, "push", "success", 0, result["message"])
             return result
 
-        rows_data = [_normalize_row_data_by_schema(rec.data, module.fields_schema) for rec in records]
-        sheets_adapter.update_worksheet_data(module.sheet_name, rows_data)
+        rows_data = [_normalize_row_data_by_schema(rec.data, module.fields_schema, module.slug) for rec in records]
+        schema_headers = [str(f.get("name", "")).strip() for f in (module.fields_schema or []) if isinstance(f, dict) and str(f.get("name", "")).strip()]
+        sheets_adapter.update_worksheet_data(module.sheet_name, rows_data, headers=schema_headers)
 
         result["records_affected"] = len(rows_data)
         result["message"] = f"Pushed {len(rows_data)} records"
@@ -195,9 +249,10 @@ async def push_module(db: AsyncSession, module: ModuleConfig) -> dict:
 async def push_single_record(db: AsyncSession, module: ModuleConfig, record: DynamicRecord):
     """Push a single updated record back to Google Sheets."""
     try:
-        row_data = _normalize_row_data_by_schema(record.data, module.fields_schema)
+        row_data = _normalize_row_data_by_schema(record.data, module.fields_schema, module.slug)
+        schema_headers = [str(f.get("name", "")).strip() for f in (module.fields_schema or []) if isinstance(f, dict) and str(f.get("name", "")).strip()]
         sheets_adapter.update_single_row(
-            module.sheet_name, record.row_index, row_data
+            module.sheet_name, record.row_index, row_data, headers=schema_headers
         )
     except Exception as e:
         logger.warning(f"Failed to push single record to Sheets: {e}")
