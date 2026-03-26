@@ -124,6 +124,15 @@ def _normalize_repair_status(value: str) -> str:
 
 
 def _extract_user_point_id(user) -> int | None:
+    direct_point_id = getattr(user, "point_id", None)
+    if direct_point_id is not None:
+        try:
+            value = int(direct_point_id)
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+
     raw = str(getattr(user, "specialization", "") or "")
     match = re.search(r"(?:point_id|point|location)\s*[:=]\s*(\d+)", raw, re.IGNORECASE)
     if not match:

@@ -4,7 +4,7 @@ Routes for authentication pages and API.
 from fastapi import APIRouter, Depends, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -36,15 +36,29 @@ async def login_page(request: Request, user=Depends(get_current_user_optional)):
 @router.post("/login", response_class=HTMLResponse)
 async def login_submit(
     request: Request,
-    email: str = Form(...),
+    login: str = Form(""),
+    email: str = Form(""),
     password: str = Form(...),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(User).where(User.email == email))
+    identifier = str(login or email or "").strip().lower()
+    if not identifier:
+        return templates.TemplateResponse(
+            "login.html", {"request": request, "error": "Введите логин или email", "info": None}
+        )
+
+    result = await db.execute(
+        select(User).where(
+            or_(
+                func.lower(func.coalesce(User.username, "")) == identifier,
+                func.lower(func.coalesce(User.email, "")) == identifier,
+            )
+        )
+    )
     user = result.scalar_one_or_none()
     if not user or not verify_password(password, user.password_hash):
         return templates.TemplateResponse(
-            "login.html", {"request": request, "error": "Неверный email или пароль", "info": None}
+            "login.html", {"request": request, "error": "Неверный логин/email или пароль", "info": None}
         )
     if not user.is_active:
         return templates.TemplateResponse(

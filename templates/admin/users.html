@@ -4,10 +4,14 @@
 <h4 class="fw-bold mb-4"><i class="bi bi-people-fill me-2"></i>Пользователи</h4>
 
 {% set create_error = request.query_params.get('create_error') %}
-{% if create_error == 'invalid_email' %}
-<div class="alert alert-danger py-2">Введите корректный email.</div>
+{% if create_error == 'invalid_login' %}
+<div class="alert alert-danger py-2">Введите корректный логин (3-100 символов: буквы, цифры, ., _, -, @).</div>
+{% elif create_error == 'invalid_email' %}
+<div class="alert alert-danger py-2">Введите корректный email или оставьте поле пустым.</div>
 {% elif create_error == 'weak_password' %}
 <div class="alert alert-danger py-2">Пароль должен быть не короче 6 символов.</div>
+{% elif create_error == 'login_exists' %}
+<div class="alert alert-danger py-2">Пользователь с таким логином уже существует.</div>
 {% elif create_error == 'email_exists' %}
 <div class="alert alert-danger py-2">Пользователь с таким email уже существует.</div>
 {% elif request.query_params.get('created') == '1' %}
@@ -25,10 +29,14 @@
         <h6 class="fw-semibold mb-3">Создать пользователя</h6>
         <form method="POST" action="/admin/users/create" class="row g-2 align-items-end">
             <div class="col-12 col-md-3">
-                <label class="form-label mb-1">Email (логин)</label>
-                <input type="email" name="email" class="form-control" placeholder="user@company.ru" required>
+                <label class="form-label mb-1">Логин</label>
+                <input type="text" name="login" class="form-control" placeholder="manager_1" required>
             </div>
             <div class="col-12 col-md-3">
+                <label class="form-label mb-1">Email (опционально)</label>
+                <input type="email" name="email" class="form-control" placeholder="user@company.ru">
+            </div>
+            <div class="col-12 col-md-2">
                 <label class="form-label mb-1">Пароль</label>
                 <input type="text" name="password" class="form-control" placeholder="Не менее 6 символов" required>
             </div>
@@ -41,12 +49,12 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-12 col-md-2">
+            <div class="col-12 col-md-1">
                 <label class="form-label mb-1">Точка</label>
-                <select name="location_name" class="form-select">
+                <select name="point_id" class="form-select">
                     <option value="">— Не назначена —</option>
                     {% for location in locations %}
-                    <option value="{{ location.name }}">{{ location.name }}</option>
+                    <option value="{{ location.id }}">{{ location.name }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -70,7 +78,9 @@
                 <thead class="table-light">
                     <tr>
                         <th>ID</th>
+                        <th>Логин</th>
                         <th>Email</th>
+                        <th>Точка</th>
                         <th>Роль</th>
                         <th>Специализация партнера</th>
                         <th>Суперпользователь</th>
@@ -82,7 +92,23 @@
                     {% for u in users %}
                     <tr>
                         <td>{{ u.id }}</td>
-                        <td><strong>{{ u.email }}</strong></td>
+                        <td><strong>{{ u.username or '—' }}</strong></td>
+                        <td><strong>{{ u.email or '—' }}</strong></td>
+                        <td>
+                            <form method="POST" action="/admin/users/{{ u.id }}/update" class="d-inline">
+                                <select name="point_id" class="form-select form-select-sm d-inline-block"
+                                        style="width: auto; min-width: 180px;" onchange="this.form.submit()">
+                                    <option value="">— Не назначена —</option>
+                                    {% for location in locations %}
+                                    <option value="{{ location.id }}" {% if u.point_id == location.id %}selected{% endif %}>{{ location.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <input type="hidden" name="role_id" value="{{ u.role_id or '' }}">
+                                <input type="hidden" name="specialization" value="{{ u.specialization or '' }}">
+                                <input type="hidden" name="is_active" value="{% if u.is_active %}on{% endif %}">
+                                <input type="hidden" name="is_superuser" value="{% if u.is_superuser %}on{% endif %}">
+                            </form>
+                        </td>
                         <td>
                             <form method="POST" action="/admin/users/{{ u.id }}/update" class="d-inline">
                                 <select name="role_id" class="form-select form-select-sm d-inline-block"
@@ -94,6 +120,7 @@
                                     </option>
                                     {% endfor %}
                                 </select>
+                                <input type="hidden" name="point_id" value="{{ u.point_id or '' }}">
                                 <input type="hidden" name="specialization" value="{{ u.specialization or '' }}">
                                 <input type="hidden" name="is_active" value="{% if u.is_active %}on{% endif %}">
                                 <input type="hidden" name="is_superuser" value="{% if u.is_superuser %}on{% endif %}">
@@ -114,6 +141,7 @@
                                     {% endfor %}
                                 </select>
                                 <input type="hidden" name="role_id" value="{{ u.role_id or '' }}">
+                                <input type="hidden" name="point_id" value="{{ u.point_id or '' }}">
                                 <input type="hidden" name="is_active" value="{% if u.is_active %}on{% endif %}">
                                 <input type="hidden" name="is_superuser" value="{% if u.is_superuser %}on{% endif %}">
                             </form>
@@ -135,6 +163,7 @@
                         <td>
                             <form method="POST" action="/admin/users/{{ u.id }}/update" class="d-inline">
                                 <input type="hidden" name="role_id" value="{{ u.role_id or '' }}">
+                                <input type="hidden" name="point_id" value="{{ u.point_id or '' }}">
                                 <input type="hidden" name="specialization" value="{{ u.specialization or '' }}">
                                 {% if u.is_active %}
                                 <input type="hidden" name="is_active" value="">
@@ -150,7 +179,7 @@
                                 </button>
                                 {% endif %}
                             </form>
-                            <form method="POST" action="/admin/users/{{ u.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить пользователя {{ u.email }}?')">
+                            <form method="POST" action="/admin/users/{{ u.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить пользователя {{ u.username or u.email }}?')">
                                 <button class="btn btn-sm btn-outline-danger" {% if u.id == user.id %}disabled title="Нельзя удалить текущего пользователя"{% endif %}>
                                     <i class="bi bi-trash"></i>
                                 </button>

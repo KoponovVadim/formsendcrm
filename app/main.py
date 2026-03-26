@@ -175,8 +175,11 @@ async def lifespan(app: FastAPI):
 
         # Create default superuser if not exists
         result = await db.execute(select(User).where(User.email == settings.FIRST_SUPERUSER_EMAIL))
-        if not result.scalar_one_or_none():
+        existing_superuser = result.scalar_one_or_none()
+        if not existing_superuser:
+            default_username = str(settings.FIRST_SUPERUSER_EMAIL).split("@", 1)[0] or "admin"
             su = User(
+                username=default_username,
                 email=settings.FIRST_SUPERUSER_EMAIL,
                 password_hash=hash_password(settings.FIRST_SUPERUSER_PASSWORD),
                 is_superuser=True,
@@ -185,6 +188,9 @@ async def lifespan(app: FastAPI):
             db.add(su)
             await db.commit()
             logger.info(f"Superuser created: {settings.FIRST_SUPERUSER_EMAIL}")
+        elif not str(existing_superuser.username or "").strip():
+            existing_superuser.username = str(settings.FIRST_SUPERUSER_EMAIL).split("@", 1)[0] or "admin"
+            await db.commit()
 
         # Create default role if none exist
         role_count = (await db.execute(select(func.count()).select_from(Role))).scalar()

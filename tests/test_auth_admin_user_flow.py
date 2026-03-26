@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
-from app.auth import get_current_user, get_current_user_optional
+from app.auth import get_current_user, get_current_user_optional, hash_password
 from app.database import get_db
 from app.models import DynamicRecord, ModuleConfig, Role, User
 from app.routes_admin import router as admin_router
@@ -76,11 +76,47 @@ async def test_admin_creates_user_with_role_and_point(db_session: Any):
     assert response.status_code == 302
     assert response.headers.get("location") == "/admin/users?created=1"
 
-    created = (await db_session.execute(select(User).where(User.email == "manager@test.ru"))).scalar_one_or_none()
+    created = (await db_session.execute(select(User).where(User.username == "manager@test.ru"))).scalar_one_or_none()
     assert created is not None
     assert created.role_id == role.id
-    assert created.specialization == location.name
+    assert created.point_id == location.id
+    assert created.specialization == ""
     assert created.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_login_works_with_username(db_session: Any):
+    app = FastAPI()
+    app.include_router(auth_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user_optional():
+        return None
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user_optional] = _override_get_current_user_optional
+
+    db_session.add(
+        User(
+            username="manager_login",
+            email="manager@test.local",
+            password_hash=hash_password("strongpass"),
+            is_active=True,
+            is_superuser=False,
+        )
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client:
+        response = await client.post(
+            "/login",
+            data={"login": "manager_login", "password": "strongpass"},
+        )
+
+    assert response.status_code == 302
+    assert response.headers.get("location") == "/"
 
 
 @pytest.mark.asyncio

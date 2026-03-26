@@ -981,20 +981,29 @@ async def users_list(
     all_modules = (await db.execute(select(ModuleConfig).order_by(ModuleConfig.sort_order))).scalars().all()
     specialization_catalog = _get_partner_specialization_catalog(all_modules)
     user_specializations_map = {u.id: get_user_specializations(u) for u in users}
+    location_name_by_id = {int(location.id): str(location.name) for location in locations}
+    user_point_name_map = {
+        int(u.id): location_name_by_id.get(int(u.point_id), "")
+        for u in users
+        if getattr(u, "point_id", None)
+    }
     return templates.TemplateResponse("admin/users.html", {
         "request": request, "user": user, "users": users,
         "roles": roles, "modules": modules,
         "locations": locations,
         "specialization_catalog": specialization_catalog,
         "user_specializations_map": user_specializations_map,
+        "user_point_name_map": user_point_name_map,
     })
 
 
 @router.post("/users/create")
 async def users_create(
+    login: str = Form(""),
     email: str = Form(""),
     password: str = Form(""),
     role_id: str = Form(""),
+    point_id: str = Form(""),
     location_name: str = Form(""),
     is_active: str = Form("on"),
     db: AsyncSession = Depends(get_db),
@@ -1002,17 +1011,31 @@ async def users_create(
 ):
     _require_admin(user)
 
+    normalized_login = str(login or "").strip().lower()
+    if not normalized_login:
+        normalized_login = str(email or "").strip().lower()
+    if not normalized_login:
+        return RedirectResponse("/admin/users?create_error=invalid_login", status_code=302)
+
+    if not re.match(r"^[a-zA-Z0-9._@-]{3,100}$", normalized_login):
+        return RedirectResponse("/admin/users?create_error=invalid_login", status_code=302)
+
     normalized_email = str(email or "").strip().lower()
-    if not normalized_email or "@" not in normalized_email:
+    if normalized_email and "@" not in normalized_email:
         return RedirectResponse("/admin/users?create_error=invalid_email", status_code=302)
 
     normalized_password = str(password or "")
     if len(normalized_password) < 6:
         return RedirectResponse("/admin/users?create_error=weak_password", status_code=302)
 
-    existing = (await db.execute(select(User).where(User.email == normalized_email))).scalar_one_or_none()
-    if existing:
-        return RedirectResponse("/admin/users?create_error=email_exists", status_code=302)
+    existing_login = (await db.execute(select(User).where(func.lower(User.username) == normalized_login))).scalar_one_or_none()
+    if existing_login:
+        return RedirectResponse("/admin/users?create_error=login_exists", status_code=302)
+
+    if normalized_email:
+        existing_email = (await db.execute(select(User).where(func.lower(User.email) == normalized_email))).scalar_one_or_none()
+        if existing_email:
+            return RedirectResponse("/admin/users?create_error=email_exists", status_code=302)
 
     parsed_role_id = int(role_id) if str(role_id or "").isdigit() else None
     if parsed_role_id is not None:
@@ -1020,17 +1043,28 @@ async def users_create(
         if not role:
             parsed_role_id = None
 
-    assigned_point = str(location_name or "").strip()
-    if assigned_point:
-        location = (await db.execute(select(Location).where(Location.name == assigned_point))).scalar_one_or_none()
-        if not location:
-            assigned_point = ""
+    assigned_point_id = None
+    point_id_value = str(point_id or "").strip()
+    if point_id_value.isdigit():
+        location = (await db.execute(select(Location).where(Location.id == int(point_id_value)))).scalar_one_or_none()
+        if location:
+            assigned_point_id = int(location.id)
+
+    # Backward compatibility with older form submissions.
+    if assigned_point_id is None:
+        assigned_point = str(location_name or "").strip()
+        if assigned_point:
+            location = (await db.execute(select(Location).where(Location.name == assigned_point))).scalar_one_or_none()
+            if location:
+                assigned_point_id = int(location.id)
 
     new_user = User(
-        email=normalized_email,
+        username=normalized_login,
+        email=normalized_email or None,
         password_hash=hash_password(normalized_password),
         role_id=parsed_role_id,
-        specialization=assigned_point,
+        point_id=assigned_point_id,
+        specialization="",
         is_active=str(is_active or "").lower() == "on",
         is_superuser=False,
     )
@@ -1054,6 +1088,14 @@ async def user_update(
     form = await request.form()
     role_id = form.get("role_id")
     target.role_id = int(role_id) if role_id else None
+
+    point_id_raw = str(form.get("point_id") or "").strip()
+    if point_id_raw and point_id_raw.isdigit():
+        location = (await db.execute(select(Location).where(Location.id == int(point_id_raw)))).scalar_one_or_none()
+        target.point_id = int(location.id) if location else None
+    elif "point_id" in form:
+        target.point_id = None
+
     if "specializations" in form:
         selected = [v.strip() for v in form.getlist("specializations") if v and v.strip()]
         target.specialization = ", ".join(selected)
