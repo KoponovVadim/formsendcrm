@@ -157,7 +157,7 @@ def update_worksheet_data(sheet_name: str, records: list[dict], headers: list[st
     """Overwrite worksheet with records, preserving and extending headers when needed."""
     ss = _get_spreadsheet()
     if ss is None:
-        return
+        raise RuntimeError("Google Sheets connection is not configured")
     ws = _retry(lambda: ss.worksheet(sheet_name))
 
     sheet_headers = [str(h).strip() for h in _retry(lambda: ws.row_values(1)) if str(h).strip()]
@@ -200,7 +200,7 @@ def update_single_row(sheet_name: str, row_index: int, data: dict, headers: list
     """Update a single row (1-based, row 1 = header), extending headers safely."""
     ss = _get_spreadsheet()
     if ss is None:
-        return
+        raise RuntimeError("Google Sheets connection is not configured")
     ws = _retry(lambda: ss.worksheet(sheet_name))
     sheet_headers = [str(h).strip() for h in _retry(lambda: ws.row_values(1)) if str(h).strip()]
     desired_headers = [str(h).strip() for h in (headers or []) if str(h).strip()]

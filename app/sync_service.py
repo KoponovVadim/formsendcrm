@@ -277,7 +277,7 @@ async def push_module(db: AsyncSession, module: ModuleConfig) -> dict:
     except Exception as e:
         logger.exception(f"Push failed for {module.slug}")
         result["status"] = "error"
-        result["message"] = str(e)
+        result["message"] = f"Push failed: {str(e)}"
         await _log_sync(db, module.slug, "push", "error", 0, str(e))
 
     return result
