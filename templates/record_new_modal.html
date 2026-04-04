@@ -4,7 +4,7 @@
     </h5>
     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
 </div>
-<form hx-post="/modules/{{ module.slug }}/record/new"
+<form hx-post="/modules/{{ module.slug }}/records/create"
       hx-target="body">
     <div class="modal-body">
         {% for field in visible_fields %}

@@ -586,35 +586,6 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    async function savePartnerIssued(checkboxEl) {
-        const slug = checkboxEl.dataset.slug;
-        const recordId = checkboxEl.dataset.recordId;
-        const field = checkboxEl.dataset.field;
-        const checked = checkboxEl.checked;
-        checkboxEl.disabled = true;
-
-        const formData = new FormData();
-        formData.append('field', field);
-        formData.append('value', checked ? 'true' : 'false');
-
-        try {
-            const response = await fetch(`/modules/${slug}/record/${recordId}/field`, {
-                method: 'POST',
-                body: formData,
-                headers: { 'HX-Request': 'true' }
-            });
-            if (!response.ok) {
-                throw new Error('Save failed');
-            }
-            refreshRecordsContainer(slug);
-        } catch (err) {
-            checkboxEl.checked = !checked;
-            alert('Не удалось обновить отметку выдачи.');
-        } finally {
-            checkboxEl.disabled = false;
-        }
-    }
-
     async function saveInlineField(slug, recordId, field, value) {
         const formData = new FormData();
         formData.append('field', field);
@@ -998,7 +969,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     document.body.addEventListener('click', function (event) {
-        if (event.target.closest('.js-status-select') || event.target.closest('.js-partner-issued-checkbox')) {
+        if (event.target.closest('.js-status-select')) {
             event.stopPropagation();
         }
     }, true);
@@ -1006,7 +977,6 @@ document.addEventListener('DOMContentLoaded', function () {
     document.body.addEventListener('click', function (event) {
         if (
             event.target.closest('.js-status-select') ||
-            event.target.closest('.js-partner-issued-checkbox') ||
             event.target.closest('.js-order-edit-btn')
         ) {
             return;
@@ -1030,13 +1000,6 @@ document.addEventListener('DOMContentLoaded', function () {
         if (selectEl) {
             event.stopPropagation();
             saveInlineStatus(selectEl);
-            return;
-        }
-
-        const checkboxEl = event.target.closest('.js-partner-issued-checkbox');
-        if (checkboxEl) {
-            event.stopPropagation();
-            savePartnerIssued(checkboxEl);
         }
     });
 

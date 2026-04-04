@@ -44,7 +44,6 @@
                 {% set perms = user.role.permissions if user.role and user.role.permissions else none %}
                 {% set can_manage_services_menu = user.is_superuser %}
                 {% set can_manage_logistics_menu = user.is_superuser %}
-                {% set can_access_courier_menu = user.is_superuser %}
                 {% if not can_manage_services_menu %}
                     {% if perms is none %}
                         {% set can_manage_services_menu = true %}
@@ -66,14 +65,6 @@
                         {% set can_manage_logistics_menu = true %}
                     {% elif can_manage_services_menu %}
                         {% set can_manage_logistics_menu = true %}
-                    {% endif %}
-
-                    {% set courier_perms = perms.get('courier') %}
-                    {% if courier_perms is mapping and courier_perms.get('cabinet') %}
-                        {% set can_access_courier_menu = true %}
-                        {% if not (logistics_perms is mapping and logistics_perms.get('manage')) and not user.is_superuser %}
-                            {% set can_manage_services_menu = false %}
-                        {% endif %}
                     {% endif %}
                 {% elif can_manage_services_menu %}
                     {% set can_manage_logistics_menu = true %}
@@ -124,27 +115,11 @@
                 {% endif %}
                 {% if can_manage_logistics_menu %}
                 <li>
-                    <a href="/admin/orders" class="nav-link text-white {% if '/admin/orders' in request.url.path %}active{% endif %}">
-                        <i class="bi bi-box-seam me-2"></i>Заказы
-                    </a>
-                </li>
-                <li>
                     <a href="/admin/logistics" class="nav-link text-white {% if '/admin/logistics' in request.url.path %}active{% endif %}">
                         <i class="bi bi-truck me-2"></i>Логистика
                     </a>
                 </li>
                 {% endif %}
-                {% endif %}
-
-                {% if can_access_courier_menu %}
-                <li class="mt-3">
-                    <small class="text-uppercase text-secondary px-3">Курьер</small>
-                </li>
-                <li>
-                    <a href="/courier" class="nav-link text-white {% if '/courier' in request.url.path %}active{% endif %}">
-                        <i class="bi bi-person-badge me-2"></i>ЛК курьера
-                    </a>
-                </li>
                 {% endif %}
             </ul>
             <hr>

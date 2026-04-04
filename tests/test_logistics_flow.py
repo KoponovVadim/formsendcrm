@@ -63,7 +63,7 @@ async def test_order_creation_auto_creates_delivery_to_main_point(db_session: An
 
 
 @pytest.mark.asyncio
-async def test_courier_cabinet_updates_delivery_and_order_status(db_session: Any):
+async def test_courier_cabinet_routes_are_disabled(db_session: Any):
     app = FastAPI()
     app.include_router(logistics_router)
 
@@ -105,26 +105,28 @@ async def test_courier_cabinet_updates_delivery_and_order_status(db_session: Any
     await db_session.commit()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client_http:
+        cabinet = await client_http.get("/courier")
         r1 = await client_http.post(f"/courier/deliveries/{delivery.id}/accept")
         r2 = await client_http.post(f"/courier/deliveries/{delivery.id}/pickup")
         r3 = await client_http.post(f"/courier/deliveries/{delivery.id}/deliver")
 
-    assert r1.status_code == 302
-    assert r2.status_code == 302
-    assert r3.status_code == 302
+    assert cabinet.status_code == 404
+    assert r1.status_code == 404
+    assert r2.status_code == 404
+    assert r3.status_code == 404
 
     refreshed_delivery = (
         await db_session.execute(select(LogisticsDelivery).where(LogisticsDelivery.id == delivery.id))
     ).scalar_one()
     refreshed_order = (await db_session.execute(select(Order).where(Order.id == order.id))).scalar_one()
 
-    assert refreshed_delivery.status == "delivered"
-    assert int(refreshed_order.location_id or 0) == int(main_point.id)
-    assert refreshed_order.status == "Приехал в точку ремонта"
+    assert refreshed_delivery.status == "awaiting_dispatch"
+    assert int(refreshed_order.location_id or 0) == int(pickup.id)
+    assert refreshed_order.status == "Ожидает доставки в ремонт"
 
 
 @pytest.mark.asyncio
-async def test_courier_cabinet_shows_only_awaiting_dispatch(db_session: Any):
+async def test_courier_cabinet_page_is_disabled(db_session: Any):
     app = FastAPI()
     app.include_router(logistics_router)
 
@@ -181,7 +183,4 @@ async def test_courier_cabinet_shows_only_awaiting_dispatch(db_session: Any):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client_http:
         response = await client_http.get("/courier")
 
-    assert response.status_code == 200
-    html = response.text
-    assert "JX-00000021" in html
-    assert "JX-00000022" not in html
+    assert response.status_code == 404

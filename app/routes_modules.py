@@ -4,9 +4,9 @@ Dynamic module routes – list, detail, create, update, delete for any module.
 from fastapi import APIRouter, Depends, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select, func, delete as sa_delete, case, or_, cast, String
+from sqlalchemy import select, func, delete as sa_delete, or_, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 import re
@@ -51,17 +51,15 @@ DEFAULT_STATUS_COLORS = {
 
 SORT_OPTIONS = {"newest", "oldest", "updated_desc", "updated_asc"}
 
-PRICE_FIELD_KEYWORDS = ("цена", "стоим", "сумм", "price", "cost", "total")
 DATE_FIELD_KEYWORDS = ("дата", "date", "deadline", "дедлайн", "гарант", "warranty")
 
-ORDER_MAIN_FIELD_CANDIDATES = [
-    ["№ заказа", "номер заказа", "заказ"],
-    ["Дата приёма", "дата приема", "принят", "дата"],
-    ["Клиент", "контакт", "фио"],
-    ["Устройство", "девайс", "модель"],
-    ["Неисправность", "проблем", "полом"],
+ORDER_MAIN_FIELDS_LIMIT = 8
+ORDER_REQUIRED_DETAIL_CANDIDATES = [
+    ["Дедлайн", "deadline", "срок"],
     ["Мастер", "исполнитель", "партнер", "партнёр"],
-    ["Статус"],
+    ["Точка", "локация", "локац", "филиал", "point"],
+    ["Дата выдачи", "выдач"],
+    ["Цена в точке", "стоимость в точке", "цена точки", "цена ремонта", "цена"],
 ]
 
 READONLY_DERIVED_MODULE_SLUGS = {"finance", "analytics"}
@@ -105,41 +103,78 @@ def _field_schema_map(module: ModuleConfig) -> dict[str, dict]:
     return mapping
 
 
-def _is_price_like_field(field_name: str) -> bool:
-    lowered = str(field_name or "").strip().lower()
-    if not lowered:
-        return False
-    return any(keyword in lowered for keyword in PRICE_FIELD_KEYWORDS)
-
-
 def _filter_module_visible_fields(slug: str, field_names: list[str]) -> list[str]:
     return list(field_names)
 
 
-def _split_order_fields_for_compact_table(field_names: list[str]) -> tuple[list[str], list[str]]:
-    if not field_names:
-        return [], []
+def _find_order_issue_field(field_names: list[str]) -> str | None:
+    exact = {"неисправность", "проблема", "дефект", "issue"}
+    for field_name in field_names:
+        lowered = str(field_name or "").strip().lower()
+        if lowered in exact:
+            return field_name
 
-    remaining = list(field_names)
+    for field_name in field_names:
+        lowered = str(field_name or "").strip().lower()
+        if (
+            ("неисправ" in lowered or "проблем" in lowered or "дефект" in lowered or "issue" in lowered)
+            and "работ" not in lowered
+        ):
+            return field_name
+
+    return None
+
+
+def _resolve_required_order_detail_fields(field_names: list[str]) -> list[str]:
+    selected: list[str] = []
+    for candidates in ORDER_REQUIRED_DETAIL_CANDIDATES:
+        match = _find_field_name_by_candidates(field_names, candidates)
+        if match and match not in selected:
+            selected.append(match)
+    return selected
+
+
+def _resolve_order_main_and_detail_fields(field_names: list[str]) -> tuple[list[str], list[str], list[str]]:
+    if not field_names:
+        return [], [], []
+
+    required_detail_fields = _resolve_required_order_detail_fields(field_names)
+    required_set = set(required_detail_fields)
+
+    remaining = [f for f in field_names if f not in required_set]
     selected_main: list[str] = []
 
-    for candidates in ORDER_MAIN_FIELD_CANDIDATES:
+    def pick_from_remaining(candidates: list[str]) -> None:
         match = _find_field_name_by_candidates(remaining, candidates)
         if not match:
-            continue
+            return
         selected_main.append(match)
-        remaining = [field_name for field_name in remaining if field_name != match]
+        remaining.remove(match)
 
-    if len(selected_main) < 6:
-        for field_name in remaining:
-            if len(selected_main) >= 6:
-                break
-            selected_main.append(field_name)
+    pick_from_remaining(["№ заказа", "номер заказа", "order_no", "заказ"])
+    pick_from_remaining(["Дата приёма", "дата приема", "принят", "accepted", "дата"])
+    pick_from_remaining(["Клиент", "контакт", "фио", "client"])
+    pick_from_remaining(["Устройство", "тип устройства", "модель", "девайс", "device"])
 
-    selected_main_set = set(selected_main)
-    main_fields = [field_name for field_name in field_names if field_name in selected_main_set]
-    detail_fields = [field_name for field_name in field_names if field_name not in selected_main_set]
-    return main_fields, detail_fields
+    issue_field = _find_order_issue_field(remaining)
+    if issue_field:
+        selected_main.append(issue_field)
+        remaining.remove(issue_field)
+
+    pick_from_remaining(["Статус", "статус заказа", "status"])
+
+    for field_name in list(remaining):
+        if len(selected_main) >= ORDER_MAIN_FIELDS_LIMIT:
+            break
+        selected_main.append(field_name)
+        remaining.remove(field_name)
+
+    detail_fields = list(required_detail_fields)
+    for field_name in field_names:
+        if field_name not in selected_main and field_name not in detail_fields:
+            detail_fields.append(field_name)
+
+    return selected_main, detail_fields, required_detail_fields
 
 
 def _is_date_field(field_name: str, field_schema: dict | None) -> bool:
@@ -228,65 +263,6 @@ def _format_amount(value: float) -> str:
     return f"{numeric:.2f}"
 
 
-def _extract_price_from_row_data(data: dict[str, Any]) -> str:
-    if not data:
-        return ""
-
-    for field_name, field_value in data.items():
-        if not _is_price_like_field(field_name):
-            continue
-
-        raw = str(field_value or "").strip()
-        if not raw:
-            continue
-
-        if any(ch.isdigit() for ch in raw):
-            return _format_amount(_parse_float(raw))
-
-        return raw
-
-    return ""
-
-
-async def _build_order_total_amount_by_record_id(
-    db: AsyncSession,
-    records: list[Any],
-    order_no_field: str | None,
-) -> dict[int, str]:
-    if not records or not order_no_field:
-        return {}
-
-    order_no_by_record_id: dict[int, str] = {}
-    for record in records:
-        record_id = int(getattr(record, "id", 0) or 0)
-        if not record_id:
-            continue
-        data = dict(getattr(record, "data", {}) or {})
-        order_no = _normalize_order_no(str(data.get(order_no_field, "")))
-        if order_no:
-            order_no_by_record_id[record_id] = order_no
-
-    if not order_no_by_record_id:
-        return {}
-
-    order_nos = sorted(set(order_no_by_record_id.values()))
-    rows = (
-        await db.execute(
-            select(CRMOrder.order_no, CRMOrder.total_amount).where(func.upper(CRMOrder.order_no).in_(order_nos))
-        )
-    ).all()
-    amount_by_order_no = {
-        _normalize_order_no(str(order_no or "")): _format_amount(float(total_amount or 0))
-        for order_no, total_amount in rows
-        if str(order_no or "").strip()
-    }
-
-    return {
-        record_id: amount_by_order_no.get(order_no, "")
-        for record_id, order_no in order_no_by_record_id.items()
-    }
-
-
 def _record_matches_search(data: dict[str, Any], search: str) -> bool:
     needle = str(search or "").strip().lower()
     if not needle:
@@ -327,6 +303,21 @@ def _parse_date_value(value) -> date | None:
         return datetime.strptime(iso, "%Y-%m-%d").date()
     except ValueError:
         return None
+
+
+def _apply_default_order_deadline(data: dict[str, Any], field_names: list[str]) -> None:
+    deadline_field = _find_field_name_by_candidates(field_names, ["Дедлайн", "deadline", "срок"])
+    if not deadline_field:
+        return
+
+    current_deadline = str(data.get(deadline_field, "")).strip()
+    if current_deadline:
+        return
+
+    accepted_at_field = _find_field_name_by_candidates(field_names, ["Дата приёма", "дата приема", "принят", "accepted", "дата"])
+    accepted_at_value = data.get(accepted_at_field, "") if accepted_at_field else ""
+    accepted_at_date = _parse_date_value(accepted_at_value) or date.today()
+    data[deadline_field] = (accepted_at_date + timedelta(days=7)).isoformat()
 
 
 def _resolve_orders_period_field(field_names: list[str]) -> str | None:
@@ -823,10 +814,6 @@ def _get_specialization_field(all_fields: list[str]) -> str | None:
     return None
 
 
-def _status_eq(value: str, expected: str) -> bool:
-    return _status_key(value) == _status_key(expected)
-
-
 def _extract_status_settings(module: ModuleConfig) -> tuple[str | None, list[str], dict[str, str]]:
     all_field_names = [f.get("name", "") for f in (module.fields_schema or []) if isinstance(f, dict)]
     detected_status_field = _get_status_field(all_field_names)
@@ -921,11 +908,9 @@ async def module_list(
 
     order_main_fields: list[str] = []
     order_detail_fields: list[str] = []
-    virtual_order_price_field = ""
-    order_total_amount_by_record_id: dict[int, str] = {}
+    required_order_detail_fields: list[str] = []
     if slug == "orders":
-        order_main_fields, order_detail_fields = _split_order_fields_for_compact_table(visible_fields)
-        virtual_order_price_field = "Цена"
+        order_main_fields, order_detail_fields, required_order_detail_fields = _resolve_order_main_and_detail_fields(visible_fields)
 
     period_from = _parse_date_value(date_from) if slug == "orders" else None
     period_to = _parse_date_value(date_to) if slug == "orders" else None
@@ -972,20 +957,15 @@ async def module_list(
                 or_(*[partner_expr.like(f"%{spec}%") for spec in lowered_specializations])
             )
 
-        partner_issued_priority = case(
-            (func.lower(func.coalesce(cast(DynamicRecord.data["__partner_issued__"], String), "false")).like("%true%"), 1),
-            else_=0,
-        ).desc()
-
         # Paginated data
         if sort == "oldest":
-            stmt = stmt.order_by(partner_issued_priority, DynamicRecord.row_index.asc())
+            stmt = stmt.order_by(DynamicRecord.row_index.asc())
         elif sort == "updated_desc":
-            stmt = stmt.order_by(partner_issued_priority, DynamicRecord.updated_at.desc(), DynamicRecord.row_index.desc())
+            stmt = stmt.order_by(DynamicRecord.updated_at.desc(), DynamicRecord.row_index.desc())
         elif sort == "updated_asc":
-            stmt = stmt.order_by(partner_issued_priority, DynamicRecord.updated_at.asc(), DynamicRecord.row_index.asc())
+            stmt = stmt.order_by(DynamicRecord.updated_at.asc(), DynamicRecord.row_index.asc())
         else:
-            stmt = stmt.order_by(partner_issued_priority, DynamicRecord.row_index.desc())
+            stmt = stmt.order_by(DynamicRecord.row_index.desc())
 
         if has_period_filter:
             all_records = (await db.execute(stmt)).scalars().all()
@@ -1005,18 +985,6 @@ async def module_list(
 
             stmt = stmt.offset(offset).limit(per_page)
             records = (await db.execute(stmt)).scalars().all()
-
-    if slug == "orders" and virtual_order_price_field:
-        order_no_field = _find_field_name_by_candidates(all_field_names, ["№ заказа", "номер заказа", "номер", "заказ", "order_no"])
-        order_total_amount_by_record_id = await _build_order_total_amount_by_record_id(db, list(records), order_no_field)
-
-        for record in records:
-            record_id = int(getattr(record, "id", 0) or 0)
-            if not record_id or order_total_amount_by_record_id.get(record_id):
-                continue
-            fallback_price = _extract_price_from_row_data(dict(getattr(record, "data", {}) or {}))
-            if fallback_price:
-                order_total_amount_by_record_id[record_id] = fallback_price
 
     total_pages = max(1, (total + per_page - 1) // per_page)
     modules = await get_all_modules(db)
@@ -1044,15 +1012,12 @@ async def module_list(
         "status_options": status_options,
         "status_colors": status_colors,
         "row_bg_for_status": lambda value: _row_bg_for_status(value, status_colors),
-        "partner_issued_field": "__partner_issued__",
         "order_main_fields": order_main_fields,
         "order_detail_fields": order_detail_fields,
-        "virtual_order_price_field": virtual_order_price_field,
-        "order_total_amount_by_record_id": order_total_amount_by_record_id,
+        "required_order_detail_fields": required_order_detail_fields,
         "is_module_readonly": is_module_readonly,
         "allow_sync_buttons": allow_sync_buttons,
         "allow_add_button": allow_add_button,
-        "show_partner_issued_column": slug == "orders",
     }
 
     # HTMX partial
@@ -1150,7 +1115,6 @@ async def record_update(
     permissions = get_user_permissions(user)
     all_field_names = [f["name"] for f in module.fields_schema]
     editable_fields = get_editable_fields(permissions, slug, all_field_names, user.is_superuser)
-    status_field, _, _ = _extract_status_settings(module)
 
     result = await db.execute(
         select(DynamicRecord).where(DynamicRecord.id == record_id, DynamicRecord.module_slug == slug)
@@ -1164,10 +1128,6 @@ async def record_update(
     for field in editable_fields:
         if field in form_data:
             new_data[field] = form_data[field]
-
-    # Once client handoff is confirmed via status, remove temporary partner-issued priority.
-    if status_field and status_field in new_data and _status_eq(str(new_data.get(status_field, "")), "Выдан"):
-        new_data["__partner_issued__"] = False
 
     record.data = new_data
     record.updated_at = datetime.now(timezone.utc)
@@ -1328,15 +1288,14 @@ async def record_update_single_field(
     editable_fields = get_editable_fields(permissions, slug, all_field_names, user.is_superuser)
 
     status_field, _, status_colors = _extract_status_settings(module)
-    allowed_meta_fields = {"__partner_issued__"}
 
-    if field not in all_field_names and field not in allowed_meta_fields:
+    if field not in all_field_names:
         raise HTTPException(400, "Поле не найдено")
-    if field not in editable_fields and field not in allowed_meta_fields:
+    if field not in editable_fields:
         raise HTTPException(403, "Поле недоступно для редактирования")
 
-    if status_field and field != status_field and field not in allowed_meta_fields:
-        raise HTTPException(400, "Inline-обновление разрешено только для статуса и флага выдачи")
+    if status_field and field != status_field:
+        raise HTTPException(400, "Inline-обновление разрешено только для статуса")
 
     result = await db.execute(
         select(DynamicRecord).where(DynamicRecord.id == record_id, DynamicRecord.module_slug == slug)
@@ -1346,17 +1305,7 @@ async def record_update_single_field(
         raise HTTPException(404)
 
     new_data = dict(record.data)
-    if field == "__partner_issued__":
-        if not status_field:
-            raise HTTPException(400, "Статусное поле не настроено")
-        current_status = str(new_data.get(status_field, ""))
-        if not (_status_eq(current_status, "Готов") or _status_eq(current_status, "Выдан")):
-            raise HTTPException(400, "Флаг выдачи доступен только для статусов 'Готов' и 'Выдан'")
-        new_data[field] = str(value).strip().lower() in {"1", "true", "on", "yes"}
-    else:
-        new_data[field] = value
-        if status_field and field == status_field and _status_eq(str(value), "Выдан"):
-            new_data["__partner_issued__"] = False
+    new_data[field] = value
     record.data = new_data
     record.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -1374,7 +1323,7 @@ async def record_update_single_field(
     })
 
 
-@router.post("/modules/{slug}/record/new", response_class=HTMLResponse)
+@router.post("/modules/{slug}/records/create", response_class=HTMLResponse)
 async def record_create(
     request: Request,
     slug: str,
@@ -1404,6 +1353,9 @@ async def record_create(
     data = {}
     for field in all_field_names:
         data[field] = form_data.get(field, "")
+
+    if slug == "orders":
+        _apply_default_order_deadline(data, all_field_names)
 
     record = DynamicRecord(
         module_slug=slug,

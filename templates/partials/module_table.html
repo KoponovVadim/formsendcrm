@@ -1,7 +1,6 @@
 {% set is_orders = module.slug == 'orders' %}
 {% set table_fields = order_main_fields if is_orders and order_main_fields else visible_fields %}
-{% set show_virtual_order_price_column = is_orders and virtual_order_price_field %}
-{% set table_action_columns = 1 + (1 if show_partner_issued_column else 0) + (1 if show_virtual_order_price_column else 0) %}
+{% set table_action_columns = 1 %}
 
 <div class="table-responsive">
     <table class="table table-hover align-middle mb-0 records-table">
@@ -11,12 +10,6 @@
                 {% for field in table_fields %}
                 <th class="text-nowrap">{{ field }}</th>
                 {% endfor %}
-                {% if show_virtual_order_price_column %}
-                <th class="text-nowrap" style="width: 140px">{{ virtual_order_price_field }}</th>
-                {% endif %}
-                {% if show_partner_issued_column %}
-                <th class="text-nowrap" style="width: 130px">Выдан партн.</th>
-                {% endif %}
                 <th style="width: 90px"></th>
             </tr>
         </thead>
@@ -24,9 +17,6 @@
             {% for record in records %}
             {% set row_status = record.data.get(status_field, '') if status_field else '' %}
             {% set row_bg = row_bg_for_status(row_status) if status_field else '' %}
-            {% set partner_issued = record.data.get(partner_issued_field, false) %}
-            {% set partner_issued_normalized = partner_issued|string|lower %}
-            {% set partner_issued_bool = partner_issued is sameas true or partner_issued_normalized in ['true', '1', 'yes', 'on', 'да'] %}
             {% set row_clickable = is_orders or not is_module_readonly %}
             {% if row_bg %}
             <tr class="record-row {% if row_bg %}status-row--custom{% else %}status-row--default{% endif %} {% if is_orders %}js-order-row-toggle{% endif %}"
@@ -93,28 +83,6 @@
                 <td class="record-cell">{{ record.data.get(field, '') | truncate(80) }}</td>
                 {% endif %}
                 {% endfor %}
-                {% if show_virtual_order_price_column %}
-                <td class="record-cell fw-semibold text-nowrap">{{ order_total_amount_by_record_id.get(record.id, '') }}</td>
-                {% endif %}
-                {% if show_partner_issued_column %}
-                <td onclick="event.stopPropagation()">
-                    {% set row_status_normalized = row_status|string|lower %}
-                    {% if status_field and row_status_normalized in ['готов', 'выдан'] and status_field in editable_fields %}
-                    <div class="form-check form-switch m-0 d-inline-flex align-items-center">
-                        <input class="form-check-input js-partner-issued-checkbox"
-                               type="checkbox"
-                               data-slug="{{ module.slug }}"
-                               data-record-id="{{ record.id }}"
-                               data-field="{{ partner_issued_field }}"
-                               {% if partner_issued_bool %}checked{% endif %}>
-                    </div>
-                    {% elif partner_issued_bool %}
-                    <span class="badge text-bg-primary">Отмечено</span>
-                    {% else %}
-                    <span class="text-muted small">-</span>
-                    {% endif %}
-                </td>
-                {% endif %}
                 <td onclick="event.stopPropagation()">
                     {% if not is_module_readonly %}
                     <button type="button"
@@ -138,11 +106,18 @@
                             {% set details = namespace(has_values=false) %}
                             {% for field in order_detail_fields %}
                             {% set detail_value = record.data.get(field, '') %}
-                            {% if detail_value is not none and detail_value != '' %}
+                            {% set is_required_detail = field in required_order_detail_fields %}
+                            {% if (detail_value is not none and detail_value != '') or is_required_detail %}
                             {% set details.has_values = true %}
                             <div class="col-12 col-lg-6">
                                 <div class="small text-muted mb-1">{{ field }}</div>
-                                <div class="fw-medium">{{ detail_value }}</div>
+                                <div class="fw-medium">
+                                    {% if detail_value is not none and detail_value != '' %}
+                                    {{ detail_value }}
+                                    {% else %}
+                                    <span class="text-muted">Не указано</span>
+                                    {% endif %}
+                                </div>
                             </div>
                             {% endif %}
                             {% endfor %}

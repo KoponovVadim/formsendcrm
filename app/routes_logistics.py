@@ -25,6 +25,7 @@ from services.order_backup_service import mirror_order_to_dynamic_modules
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
+COURIER_CABINET_ENABLED = False
 
 
 def _deny_if_not_logistics_manager(user) -> None:
@@ -35,6 +36,11 @@ def _deny_if_not_logistics_manager(user) -> None:
 def _deny_if_not_courier(user) -> None:
     if not can_access_courier_cabinet(user):
         raise HTTPException(status_code=403, detail="courier_access_denied")
+
+
+def _deny_if_courier_cabinet_disabled() -> None:
+    if not COURIER_CABINET_ENABLED:
+        raise HTTPException(status_code=404, detail="courier_cabinet_disabled")
 
 
 async def _sync_order_status_to_modules(db: AsyncSession, order: Order) -> None:
@@ -207,6 +213,7 @@ async def courier_cabinet(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
+    _deny_if_courier_cabinet_disabled()
     _deny_if_not_courier(user)
 
     modules = await get_all_modules(db)
@@ -234,6 +241,7 @@ async def courier_accept_delivery(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
+    _deny_if_courier_cabinet_disabled()
     _deny_if_not_courier(user)
 
     delivery = (await db.execute(select(LogisticsDelivery).where(LogisticsDelivery.id == int(delivery_id)))).scalar_one_or_none()
@@ -258,6 +266,7 @@ async def courier_pickup_delivery(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
+    _deny_if_courier_cabinet_disabled()
     _deny_if_not_courier(user)
 
     delivery = (await db.execute(select(LogisticsDelivery).where(LogisticsDelivery.id == int(delivery_id)))).scalar_one_or_none()
@@ -282,6 +291,7 @@ async def courier_deliver_delivery(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
+    _deny_if_courier_cabinet_disabled()
     _deny_if_not_courier(user)
 
     delivery = (await db.execute(select(LogisticsDelivery).where(LogisticsDelivery.id == int(delivery_id)))).scalar_one_or_none()

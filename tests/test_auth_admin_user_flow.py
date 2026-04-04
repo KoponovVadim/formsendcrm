@@ -207,7 +207,7 @@ async def test_orders_module_filters_records_by_period(db_session: Any):
 
 
 @pytest.mark.asyncio
-async def test_orders_module_shows_virtual_price_column_when_price_field_missing(db_session: Any):
+async def test_orders_module_does_not_show_derived_price_when_price_field_missing(db_session: Any):
     app = FastAPI()
     app.include_router(modules_router)
 
@@ -266,8 +266,135 @@ async def test_orders_module_shows_virtual_price_column_when_price_field_missing
 
     assert response.status_code == 200
     html = response.text
-    assert "Цена" in html
-    assert "4321" in html
+    assert "ORD-PRICE-1" in html
+    assert "4321" not in html
+
+
+@pytest.mark.asyncio
+async def test_orders_module_shows_manual_price_field_value(db_session: Any):
+    app = FastAPI()
+    app.include_router(modules_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    db_session.add(
+        ModuleConfig(
+            slug="orders",
+            sheet_name="Заказы",
+            display_name="Заказы",
+            icon="bi-clipboard-check",
+            enabled=True,
+            fields_schema=[
+                {"name": "№ заказа", "type": "TEXT"},
+                {"name": "Дата приёма", "type": "DATE"},
+                {"name": "Клиент", "type": "TEXT"},
+                {"name": "Цена в точке", "type": "NUMBER"},
+                {"name": "Статус", "type": "TEXT"},
+            ],
+            sort_order=0,
+        )
+    )
+    await db_session.flush()
+
+    client = Client(name="Manual Price Client", phone="79990002234", email="")
+    db_session.add(client)
+    await db_session.flush()
+
+    db_session.add(
+        Order(
+            order_no="ORD-PRICE-2",
+            client_id=client.id,
+            status="Новый",
+            total_amount=7777,
+            currency="RUB",
+            source_channel="tests",
+        )
+    )
+    db_session.add(
+        DynamicRecord(
+            module_slug="orders",
+            row_index=2,
+            data={
+                "№ заказа": "ORD-PRICE-2",
+                "Дата приёма": "2026-04-04",
+                "Клиент": "Manual Price Client",
+                "Цена в точке": "5000",
+                "Статус": "Новый",
+            },
+        )
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client_http:
+        response = await client_http.get("/modules/orders")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "5000" in html
+    assert "7777" not in html
+
+
+@pytest.mark.asyncio
+async def test_orders_manual_create_sets_default_deadline_plus_seven_days(db_session: Any):
+    app = FastAPI()
+    app.include_router(modules_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    db_session.add(
+        ModuleConfig(
+            slug="orders",
+            sheet_name="Заказы",
+            display_name="Заказы",
+            icon="bi-clipboard-check",
+            enabled=True,
+            fields_schema=[
+                {"name": "№ заказа", "type": "TEXT"},
+                {"name": "Дата приёма", "type": "DATE"},
+                {"name": "Дедлайн", "type": "DATE"},
+                {"name": "Статус", "type": "TEXT"},
+            ],
+            sort_order=0,
+        )
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client_http:
+        response = await client_http.post(
+            "/modules/orders/records/create",
+            data={
+                "№ заказа": "ORD-DEADLINE-1",
+                "Дата приёма": "2026-04-10",
+                "Дедлайн": "",
+                "Статус": "Новый",
+            },
+        )
+
+    assert response.status_code == 302
+
+    created = (
+        await db_session.execute(
+            select(DynamicRecord)
+            .where(DynamicRecord.module_slug == "orders")
+            .order_by(DynamicRecord.id.desc())
+            .limit(1)
+        )
+    ).scalar_one()
+    assert created.data.get("Дедлайн") == "2026-04-17"
 
 
 @pytest.mark.asyncio
@@ -570,3 +697,58 @@ async def test_admin_executor_delete_blocked_with_open_tasks(db_session: Any):
 
     exists = (await db_session.execute(select(Executor).where(Executor.id == executor.id))).scalar_one_or_none()
     assert exists is not None
+
+
+def test_orders_required_detail_fields_do_not_leak_into_main():
+    """
+    Regression test for BUG #1: Ensure required order detail fields 
+    (Дедлайн, Мастер, Точка, Дата выдачи, Цена в точке)
+    never appear in the main table fields.
+    """
+    from app.routes_modules import _resolve_order_main_and_detail_fields
+
+    large_schema_fields = [
+        "№ заказа",
+        "Дата приёма",
+        "Клиент",
+        "Устройство",
+        "Неисправность",
+        "Мастер",  # Required detail field
+        "Точка",  # Required detail field
+        "Дата выдачи",  # Required detail field
+        "Дедлайн",  # Required detail field
+        "Цена в точке",  # Required detail field
+        "Статус",
+        "Комментарий",
+        "Поле1",
+        "Поле2",
+    ]
+
+    main_fields, detail_fields, required_detail_fields = _resolve_order_main_and_detail_fields(large_schema_fields)
+
+    # Verify required detail fields are correctly identified
+    required_detail_names = {f.lower() for f in required_detail_fields}
+    assert "дедлайн" in required_detail_names
+    assert "мастер" in required_detail_names
+    assert "точка" in required_detail_names
+    assert "дата выдачи" in required_detail_names
+    assert "цена в точке" in required_detail_names
+
+    # Verify required detail fields DO NOT appear in main fields
+    main_field_names = {f.lower() for f in main_fields}
+    assert "дедлайн" not in main_field_names
+    assert "мастер" not in main_field_names
+    assert "точка" not in main_field_names
+    assert "дата выдачи" not in main_field_names
+    assert "цена в точке" not in main_field_names
+
+    # Verify main fields includes expected primary fields
+    assert any("заказа" in f.lower() for f in main_fields), "Должен быть № заказа"
+    assert any("приём" in f.lower() or "прием" in f.lower() for f in main_fields), "Должна быть Дата приёма"
+    assert any("клиент" in f.lower() for f in main_fields), "Должен быть Клиент"
+
+    # Verify detail fields contains all required fields
+    detail_field_names = {f.lower() for f in detail_fields}
+    assert "дедлайн" in detail_field_names
+    assert "мастер" in detail_field_names
+    assert "точка" in detail_field_names
