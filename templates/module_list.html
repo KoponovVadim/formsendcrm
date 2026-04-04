@@ -7,7 +7,7 @@
         <span class="badge bg-secondary rounded-pill fs-6">{{ total }}</span>
     </h4>
     <div class="d-flex gap-2">
-        {% if user.is_superuser %}
+        {% if allow_sync_buttons %}
         <button class="btn btn-outline-primary btn-sm"
                 hx-post="/admin/sync/pull/{{ module.slug }}"
                 hx-target="#sync-msg" hx-swap="innerHTML">
@@ -19,21 +19,22 @@
             <i class="bi bi-cloud-upload me-1"></i>Push
         </button>
         {% endif %}
+        {% if allow_add_button %}
         <button class="btn btn-success btn-sm"
                 hx-get="/modules/{{ module.slug }}/new"
                 hx-target="#modal-container" hx-swap="innerHTML"
                 data-bs-toggle="modal" data-bs-target="#recordModal">
             <i class="bi bi-plus-lg me-1"></i>Добавить
         </button>
+        {% endif %}
     </div>
 </div>
 
 <div id="sync-msg" class="mb-2"></div>
-<input type="hidden" name="view" value="{{ view_mode }}">
 
 <!-- Search + sort -->
 <div class="row g-2 mb-3">
-    <div class="col-12 col-lg-8">
+    <div class="col-12 {% if module.slug == 'orders' %}col-lg-6{% else %}col-lg-8{% endif %}">
         <div class="input-group">
             <span class="input-group-text"><i class="bi bi-search"></i></span>
             <input type="search" class="form-control" placeholder="Поиск..."
@@ -42,62 +43,60 @@
                    hx-trigger="keyup changed delay:300ms"
                    hx-target="#records-container"
                    hx-swap="innerHTML"
-                   hx-include="[name='search'], [name='sort'], [name='view']">
+                   hx-include="[name='search'], [name='sort'], [name='date_from'], [name='date_to']">
         </div>
     </div>
-    <div class="col-12 col-lg-4">
+    <div class="col-12 {% if module.slug == 'orders' %}col-lg-2{% else %}col-lg-4{% endif %}">
         <select class="form-select" name="sort"
                 hx-get="/modules/{{ module.slug }}"
                 hx-trigger="change"
                 hx-target="#records-container"
                 hx-swap="innerHTML"
-                hx-include="[name='search'], [name='sort'], [name='view']">
+                hx-include="[name='search'], [name='sort'], [name='date_from'], [name='date_to']">
             <option value="newest" {% if sort == 'newest' %}selected{% endif %}>Сначала новые</option>
             <option value="oldest" {% if sort == 'oldest' %}selected{% endif %}>Сначала старые</option>
             <option value="updated_desc" {% if sort == 'updated_desc' %}selected{% endif %}>Недавно измененные</option>
             <option value="updated_asc" {% if sort == 'updated_asc' %}selected{% endif %}>Давно измененные</option>
         </select>
     </div>
+    {% if module.slug == 'orders' %}
+    <div class="col-6 col-lg-2">
+        <input type="date"
+               class="form-control"
+               name="date_from"
+               value="{{ date_from }}"
+               aria-label="Дата от"
+               hx-get="/modules/{{ module.slug }}"
+               hx-trigger="change"
+               hx-target="#records-container"
+               hx-swap="innerHTML"
+               hx-include="[name='search'], [name='sort'], [name='date_from'], [name='date_to']">
+    </div>
+    <div class="col-6 col-lg-2">
+        <input type="date"
+               class="form-control"
+               name="date_to"
+               value="{{ date_to }}"
+               aria-label="Дата до"
+               hx-get="/modules/{{ module.slug }}"
+               hx-trigger="change"
+               hx-target="#records-container"
+               hx-swap="innerHTML"
+               hx-include="[name='search'], [name='sort'], [name='date_from'], [name='date_to']">
+    </div>
+    {% endif %}
 </div>
-
-{% if module.slug == 'orders' %}
-<div class="d-flex align-items-center gap-2 mb-3">
-    <span class="small text-muted">Режим:</span>
-    <button class="btn btn-sm {% if view_mode == 'table' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-        data-view="table"
-        onclick="document.querySelector(\"input[name='view']\").value='table'"
-            hx-get="/modules/{{ module.slug }}?page={{ page }}&search={{ search }}&sort={{ sort }}&view=table"
-            hx-target="#records-container"
-            hx-swap="innerHTML">Таблица</button>
-    <button class="btn btn-sm {% if view_mode == 'kanban' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-        data-view="kanban"
-        onclick="document.querySelector(\"input[name='view']\").value='kanban'"
-            hx-get="/modules/{{ module.slug }}?page={{ page }}&search={{ search }}&sort={{ sort }}&view=kanban"
-            hx-target="#records-container"
-            hx-swap="innerHTML">Kanban</button>
-</div>
-{% endif %}
 
 <div id="records-container">
-    {% include "partials/module_records_view.html" %}
+    {% include "partials/module_table.html" %}
 </div>
 
 <!-- Edit Modal -->
 <div class="modal fade" id="recordModal" tabindex="-1">
-    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
         <div class="modal-content" id="modal-container">
             <!-- Content loaded via HTMX -->
         </div>
     </div>
 </div>
-
-{% if module.slug == 'orders' %}
-<div class="offcanvas offcanvas-end" tabindex="-1" id="orderDrawer" aria-labelledby="orderDrawerLabel">
-    <div class="offcanvas-header">
-        <h5 class="offcanvas-title" id="orderDrawerLabel">Карточка заказа</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
-    </div>
-    <div class="offcanvas-body p-0" id="drawer-container"></div>
-</div>
-{% endif %}
 {% endblock %}

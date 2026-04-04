@@ -6,14 +6,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 import json
 import re
 
 from app.database import get_db
 from app.models import User, Role, ModuleConfig, SyncLog, DynamicRecord
 from app.auth import (
-    can_manage_logistics,
     can_manage_services,
     get_current_user,
     require_superuser,
@@ -22,10 +20,8 @@ from app.auth import (
 )
 from app.schema_loader import get_all_modules
 from app import sync_service
-from app import sheets_adapter
-from models.crm import Executor, Location, LocationPrice, LogisticsDelivery, Order, Service, Task
+from models.crm import Executor, Location, LocationPrice, Order, Service, Task
 from repositories.crm_repository import CRMRepository
-from services.order_backup_service import remove_order_from_dynamic_modules
 
 router = APIRouter(prefix="/admin")
 templates = Jinja2Templates(directory="templates")
@@ -179,14 +175,6 @@ def _require_services_manager(user):
         raise HTTPException(status_code=403, detail="services_manage_access_denied")
 
 
-def _require_orders_manager(user):
-    if user.is_superuser:
-        return
-    if can_manage_logistics(user) or can_manage_services(user):
-        return
-    raise HTTPException(status_code=403, detail="orders_manage_access_denied")
-
-
 def _safe_admin_redirect_path(value: str, default: str = "/admin/locations") -> str:
     path = str(value or "").strip()
     if path.startswith("/admin/"):
@@ -194,94 +182,8 @@ def _safe_admin_redirect_path(value: str, default: str = "/admin/locations") -> 
     return default
 
 
-def _build_reception_role_permissions(all_modules: list[ModuleConfig]) -> dict:
-    permissions: dict = {}
-
-    order_edit_keywords = (
-        "статус",
-        "клиент",
-        "телефон",
-        "устройство",
-        "неисправ",
-        "мастер",
-        "дедлайн",
-        "выдач",
-        "прием",
-        "примеч",
-        "comment",
-        "status",
-        "client",
-        "phone",
-        "device",
-    )
-
-    client_edit_keywords = (
-        "фио",
-        "название",
-        "телефон",
-        "примеч",
-        "name",
-        "phone",
-        "note",
-    )
-
-    for mod in all_modules:
-        fields = [f.get("name", "") for f in (mod.fields_schema or []) if isinstance(f, dict)]
-        slug = str(mod.slug or "")
-
-        if slug == "orders":
-            editable = [
-                field_name
-                for field_name in fields
-                if any(keyword in str(field_name).lower() for keyword in order_edit_keywords)
-            ]
-            if not editable:
-                editable = list(fields)
-
-            permissions[slug] = {
-                "visible": True,
-                "fields_visible": list(fields),
-                "fields_editable": editable,
-            }
-            continue
-
-        if slug == "clients":
-            editable = [
-                field_name
-                for field_name in fields
-                if any(keyword in str(field_name).lower() for keyword in client_edit_keywords)
-            ]
-            permissions[slug] = {
-                "visible": True,
-                "fields_visible": list(fields),
-                "fields_editable": editable,
-            }
-            continue
-
-        if slug == "warranty":
-            editable = [
-                field_name
-                for field_name in fields
-                if "статус" in str(field_name).lower() or "status" in str(field_name).lower()
-            ]
-            permissions[slug] = {
-                "visible": True,
-                "fields_visible": list(fields),
-                "fields_editable": editable,
-            }
-            continue
-
-        permissions[slug] = {
-            "visible": False,
-            "fields_visible": [],
-            "fields_editable": [],
-        }
-
-    permissions["courier"] = {"cabinet": False}
-    permissions["logistics"] = {"manage": True}
-    permissions["v2"] = {"services": {"manage": False}}
-
-    return permissions
+def _is_sync_blocked_module(slug: str) -> bool:
+    return str(slug or "").strip().lower() == "analytics"
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -361,151 +263,6 @@ async def admin_locations(
         "services": services,
         "price_map": price_map,
     })
-
-
-@router.get("/orders", response_class=HTMLResponse)
-async def admin_orders(
-    request: Request,
-    q: str = "",
-    status_filter: str = "",
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    _require_orders_manager(user)
-    modules = await get_all_modules(db)
-    orders_module = next((m for m in modules if m.slug == "orders"), None)
-
-    if not orders_module:
-        return templates.TemplateResponse(
-            "admin/orders.html",
-            {
-                "request": request,
-                "user": user,
-                "modules": modules,
-                "orders": [],
-                "query": str(q or "").strip(),
-                "status_filter": str(status_filter or "").strip(),
-                "statuses": [],
-            },
-        )
-
-    field_names = [f.get("name", "") for f in (orders_module.fields_schema or []) if isinstance(f, dict)]
-
-    def _find_field(candidates: list[str]) -> str:
-        lowered_map = {str(name).strip().lower(): name for name in field_names if str(name).strip()}
-        for candidate in candidates:
-            key = str(candidate).strip().lower()
-            if key in lowered_map:
-                return lowered_map[key]
-        for name in field_names:
-            lowered = str(name).strip().lower()
-            if any(str(candidate).strip().lower() in lowered for candidate in candidates):
-                return name
-        return ""
-
-    order_no_field = _find_field(["№ заказа", "номер заказа", "order_no", "номер"])
-    status_field = _find_field(["Статус", "status"])
-    client_field = _find_field(["Клиент", "фио", "client"])
-    point_field = _find_field(["Точка", "Локация", "point", "location"])
-
-    normalized_query = str(q or "").strip().lower()
-    normalized_status = str(status_filter or "").strip().lower()
-
-    records = (
-        await db.execute(
-            select(DynamicRecord)
-            .where(DynamicRecord.module_slug == "orders")
-            .order_by(DynamicRecord.row_index.desc())
-            .limit(1000)
-        )
-    ).scalars().all()
-
-    dedup_by_order_no: dict[str, DynamicRecord] = {}
-    records_without_no: list[DynamicRecord] = []
-    for record in records:
-        data = dict(record.data or {})
-        order_no = str(data.get(order_no_field, "") or "").strip() if order_no_field else ""
-        if not order_no:
-            records_without_no.append(record)
-            continue
-        existing = dedup_by_order_no.get(order_no)
-        if existing is None or int(record.row_index or 0) > int(existing.row_index or 0):
-            dedup_by_order_no[order_no] = record
-
-    records = list(dedup_by_order_no.values()) + records_without_no
-
-    sql_orders = (await db.execute(select(Order))).scalars().all()
-    sql_by_order_no = {str(o.order_no or "").strip(): o for o in sql_orders}
-
-    rows = []
-    statuses_set = set()
-    for record in records:
-        data = dict(record.data or {})
-        order_no = str(data.get(order_no_field, "") or "").strip()
-        status_value = str(data.get(status_field, "") or "").strip()
-        statuses_set.add(status_value)
-
-        if normalized_query:
-            search_text = " ".join(
-                [
-                    order_no,
-                    status_value,
-                    str(data.get(client_field, "") or ""),
-                    str(data.get(point_field, "") or ""),
-                ]
-            ).lower()
-            if normalized_query not in search_text:
-                continue
-
-        if normalized_status and normalized_status != status_value.lower():
-            continue
-
-        linked_sql = sql_by_order_no.get(order_no)
-        rows.append(
-            {
-                "dynamic_id": int(record.id),
-                "order_id": int(linked_sql.id) if linked_sql else None,
-                "order_no": order_no or f"#{record.row_index}",
-                "client": str(data.get(client_field, "") or ""),
-                "point": str(data.get(point_field, "") or ""),
-                "status": status_value,
-                "updated_at": record.updated_at,
-            }
-        )
-
-    statuses = sorted([s for s in statuses_set if str(s or "").strip()])
-
-    return templates.TemplateResponse(
-        "admin/orders.html",
-        {
-            "request": request,
-            "user": user,
-            "modules": modules,
-            "orders": rows,
-            "query": str(q or "").strip(),
-            "status_filter": str(status_filter or "").strip(),
-            "statuses": statuses,
-        },
-    )
-
-
-@router.post("/orders/{order_id}/delete")
-async def admin_order_delete(
-    order_id: int,
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    _require_orders_manager(user)
-    order = (await db.execute(select(Order).where(Order.id == order_id))).scalar_one_or_none()
-    if not order:
-        raise HTTPException(status_code=404, detail="order_not_found")
-
-    order_no = str(order.order_no or "").strip()
-    await db.delete(order)
-    if order_no:
-        await remove_order_from_dynamic_modules(db, order_no=order_no)
-    await db.commit()
-    return RedirectResponse("/admin/orders", status_code=302)
 
 
 @router.get("/executors", response_class=HTMLResponse)
@@ -868,33 +625,6 @@ async def role_create(
     return RedirectResponse("/admin/roles", status_code=302)
 
 
-@router.post("/roles/create-reception", response_class=HTMLResponse)
-async def role_create_reception(
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    _require_admin(user)
-
-    role_name = "Пункт приема заказов"
-    existing = (await db.execute(select(Role).where(Role.name == role_name))).scalar_one_or_none()
-    if existing:
-        return RedirectResponse("/admin/roles?exists=reception", status_code=302)
-
-    all_modules_result = (await db.execute(select(ModuleConfig).order_by(ModuleConfig.sort_order))).scalars().all()
-    permissions = _build_reception_role_permissions(all_modules_result)
-
-    db.add(
-        Role(
-            name=role_name,
-            description="Приемка, выдача и отправка заказов",
-            permissions=permissions,
-        )
-    )
-    await db.commit()
-
-    return RedirectResponse("/admin/roles?created=reception", status_code=302)
-
-
 @router.get("/roles/{role_id}", response_class=HTMLResponse)
 async def role_edit_page(
     request: Request,
@@ -955,11 +685,6 @@ async def role_update(
     permissions["logistics"] = {
         "manage": form.get("perm_logistics_manage") == "on",
     }
-    permissions["v2"] = {
-        "services": {
-            "manage": form.get("perm_v2_services_manage") == "on",
-        }
-    }
 
     role.permissions = permissions
     await db.commit()
@@ -995,29 +720,20 @@ async def users_list(
     all_modules = (await db.execute(select(ModuleConfig).order_by(ModuleConfig.sort_order))).scalars().all()
     specialization_catalog = _get_partner_specialization_catalog(all_modules)
     user_specializations_map = {u.id: get_user_specializations(u) for u in users}
-    location_name_by_id = {int(location.id): str(location.name) for location in locations}
-    user_point_name_map = {
-        int(u.id): location_name_by_id.get(int(u.point_id), "")
-        for u in users
-        if getattr(u, "point_id", None)
-    }
     return templates.TemplateResponse("admin/users.html", {
         "request": request, "user": user, "users": users,
         "roles": roles, "modules": modules,
         "locations": locations,
         "specialization_catalog": specialization_catalog,
         "user_specializations_map": user_specializations_map,
-        "user_point_name_map": user_point_name_map,
     })
 
 
 @router.post("/users/create")
 async def users_create(
-    login: str = Form(""),
     email: str = Form(""),
     password: str = Form(""),
     role_id: str = Form(""),
-    point_id: str = Form(""),
     location_name: str = Form(""),
     is_active: str = Form("on"),
     db: AsyncSession = Depends(get_db),
@@ -1025,31 +741,17 @@ async def users_create(
 ):
     _require_admin(user)
 
-    normalized_login = str(login or "").strip().lower()
-    if not normalized_login:
-        normalized_login = str(email or "").strip().lower()
-    if not normalized_login:
-        return RedirectResponse("/admin/users?create_error=invalid_login", status_code=302)
-
-    if not re.match(r"^[a-zA-Z0-9._@-]{3,100}$", normalized_login):
-        return RedirectResponse("/admin/users?create_error=invalid_login", status_code=302)
-
     normalized_email = str(email or "").strip().lower()
-    if normalized_email and "@" not in normalized_email:
+    if not normalized_email or "@" not in normalized_email:
         return RedirectResponse("/admin/users?create_error=invalid_email", status_code=302)
 
     normalized_password = str(password or "")
     if len(normalized_password) < 6:
         return RedirectResponse("/admin/users?create_error=weak_password", status_code=302)
 
-    existing_login = (await db.execute(select(User).where(func.lower(User.username) == normalized_login))).scalar_one_or_none()
-    if existing_login:
-        return RedirectResponse("/admin/users?create_error=login_exists", status_code=302)
-
-    if normalized_email:
-        existing_email = (await db.execute(select(User).where(func.lower(User.email) == normalized_email))).scalar_one_or_none()
-        if existing_email:
-            return RedirectResponse("/admin/users?create_error=email_exists", status_code=302)
+    existing = (await db.execute(select(User).where(User.email == normalized_email))).scalar_one_or_none()
+    if existing:
+        return RedirectResponse("/admin/users?create_error=email_exists", status_code=302)
 
     parsed_role_id = int(role_id) if str(role_id or "").isdigit() else None
     if parsed_role_id is not None:
@@ -1057,28 +759,17 @@ async def users_create(
         if not role:
             parsed_role_id = None
 
-    assigned_point_id = None
-    point_id_value = str(point_id or "").strip()
-    if point_id_value.isdigit():
-        location = (await db.execute(select(Location).where(Location.id == int(point_id_value)))).scalar_one_or_none()
-        if location:
-            assigned_point_id = int(location.id)
-
-    # Backward compatibility with older form submissions.
-    if assigned_point_id is None:
-        assigned_point = str(location_name or "").strip()
-        if assigned_point:
-            location = (await db.execute(select(Location).where(Location.name == assigned_point))).scalar_one_or_none()
-            if location:
-                assigned_point_id = int(location.id)
+    assigned_point = str(location_name or "").strip()
+    if assigned_point:
+        location = (await db.execute(select(Location).where(Location.name == assigned_point))).scalar_one_or_none()
+        if not location:
+            assigned_point = ""
 
     new_user = User(
-        username=normalized_login,
-        email=normalized_email or None,
+        email=normalized_email,
         password_hash=hash_password(normalized_password),
         role_id=parsed_role_id,
-        point_id=assigned_point_id,
-        specialization="",
+        specialization=assigned_point,
         is_active=str(is_active or "").lower() == "on",
         is_superuser=False,
     )
@@ -1102,14 +793,6 @@ async def user_update(
     form = await request.form()
     role_id = form.get("role_id")
     target.role_id = int(role_id) if role_id else None
-
-    point_id_raw = str(form.get("point_id") or "").strip()
-    if point_id_raw and point_id_raw.isdigit():
-        location = (await db.execute(select(Location).where(Location.id == int(point_id_raw)))).scalar_one_or_none()
-        target.point_id = int(location.id) if location else None
-    elif "point_id" in form:
-        target.point_id = None
-
     if "specializations" in form:
         selected = [v.strip() for v in form.getlist("specializations") if v and v.strip()]
         target.specialization = ", ".join(selected)
@@ -1119,45 +802,6 @@ async def user_update(
     target.is_superuser = form.get("is_superuser") == "on"
     await db.commit()
     return RedirectResponse("/admin/users", status_code=302)
-
-
-@router.post("/users/{user_id}/delete")
-async def user_delete(
-    user_id: int,
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    _require_admin(user)
-
-    target = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
-    if not target:
-        raise HTTPException(status_code=404, detail="user_not_found")
-
-    if int(target.id) == int(user.id):
-        return RedirectResponse("/admin/users?delete_error=self", status_code=302)
-
-    if bool(target.is_superuser):
-        superusers_count = (
-            await db.execute(select(func.count()).select_from(User).where(User.is_superuser == True))
-        ).scalar() or 0
-        if int(superusers_count) <= 1:
-            return RedirectResponse("/admin/users?delete_error=last_superuser", status_code=302)
-
-    executors = (
-        await db.execute(select(Executor).where(Executor.user_id == int(target.id)))
-    ).scalars().all()
-    for executor in executors:
-        executor.user_id = None
-
-    deliveries = (
-        await db.execute(select(LogisticsDelivery).where(LogisticsDelivery.courier_user_id == int(target.id)))
-    ).scalars().all()
-    for delivery in deliveries:
-        delivery.courier_user_id = None
-
-    await db.delete(target)
-    await db.commit()
-    return RedirectResponse("/admin/users?deleted=1", status_code=302)
 
 
 # ─── MODULES CONFIG ─────────────────────────────────────
@@ -1319,42 +963,6 @@ async def sync_push(
     return RedirectResponse("/admin/", status_code=302)
 
 
-@router.post("/sync/check", response_class=HTMLResponse)
-async def sync_check(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    _require_admin(user)
-    from app.schema_loader import get_all_modules
-
-    modules = await get_all_modules(db)
-    html = '<div class="alert alert-secondary"><div class="fw-semibold mb-2">Проверка синхронизации</div>'
-
-    for module in modules:
-        crm_count = (
-            await db.execute(
-                select(func.count()).where(DynamicRecord.module_slug == module.slug)
-            )
-        ).scalar() or 0
-        google_count = 0
-        try:
-            google_rows = sheets_adapter.get_worksheet_data(module.sheet_name)
-            google_count = len(google_rows or [])
-        except Exception as exc:
-            html += f'<div>{module.slug}: ошибка чтения Google ({str(exc)})</div>'
-            continue
-
-        delta = crm_count - google_count
-        marker = "OK" if delta == 0 else f"Δ {delta:+d}"
-        html += f'<div>{module.slug}: CRM={crm_count}, Google={google_count} ({marker})</div>'
-
-    html += '</div>'
-    if request.headers.get("HX-Request"):
-        return HTMLResponse(html)
-    return RedirectResponse("/admin/", status_code=302)
-
-
 @router.post("/sync/pull/{slug}", response_class=HTMLResponse)
 async def sync_pull_module(
     request: Request,
@@ -1363,6 +971,10 @@ async def sync_pull_module(
     user=Depends(get_current_user),
 ):
     _require_admin(user)
+    if _is_sync_blocked_module(slug):
+        if request.headers.get("HX-Request"):
+            return HTMLResponse('<div class="alert alert-warning">Импорт для аналитики отключен: данные считаются автоматически из заказов.</div>')
+        return RedirectResponse("/admin/", status_code=302)
     from app.schema_loader import get_module_by_slug
     module = await get_module_by_slug(db, slug)
     if not module:
@@ -1381,6 +993,10 @@ async def sync_push_module(
     user=Depends(get_current_user),
 ):
     _require_admin(user)
+    if _is_sync_blocked_module(slug):
+        if request.headers.get("HX-Request"):
+            return HTMLResponse('<div class="alert alert-warning">Экспорт для аналитики отключен: данные считаются автоматически из заказов.</div>')
+        return RedirectResponse("/admin/", status_code=302)
     from app.schema_loader import get_module_by_slug
 
     module = await get_module_by_slug(db, slug)

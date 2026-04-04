@@ -7,62 +7,25 @@
 <form hx-post="/modules/{{ module.slug }}/record/new"
       hx-target="body">
     <div class="modal-body">
-        {% if module.slug == 'orders' %}
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header fw-semibold">Назначение</div>
-            <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-12 col-md-6">
-                        <label class="form-label fw-medium mb-1">Точка ремонта</label>
-                        <select class="form-select js-order-create-point" name="__point_id__" required>
-                            <option value="">Выберите точку</option>
-                            {% for point in point_options %}
-                            <option value="{{ point.id }}">{{ point.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-12 col-md-6">
-                        <label class="form-label fw-medium mb-1">Мастер</label>
-                        <select class="form-select js-order-create-master" name="__master_id__">
-                            <option value="">Без мастера</option>
-                            {% for master in master_options %}
-                            <option value="{{ master.id }}" data-location-id="{{ master.location_id if master.location_id else '' }}">{{ master.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
-            </div>
-        </div>
-        {% endif %}
-
-        <div class="row g-3 record-edit-grid">
         {% for field in visible_fields %}
-        <div class="col-12 col-md-6 col-xl-4">
-            <div class="record-edit-field h-100">
-                <label class="form-label fw-medium mb-2">{{ field }}</label>
-                {% if field in editable_fields %}
-                {% if status_field and field == status_field %}
-                <select class="form-select" name="{{ field }}">
-                    {% for option in status_options %}
-                    <option value="{{ option }}" {% if loop.first %}selected{% endif %}>{{ option }}</option>
-                    {% endfor %}
-                </select>
-                {% else %}
-                {% set initial = initial_values.get(field, '') if initial_values else '' %}
-                {% set lowered_field = field|lower %}
-                {% if module.slug == 'orders' and ('дата' in lowered_field or 'date' in lowered_field) and lowered_field not in ['дедлайн', 'дата выдачи', 'гарантия до'] %}
-                <input type="date" class="form-control" name="{{ field }}" value="{{ initial }}">
-                {% else %}
-                <input type="text" class="form-control" name="{{ field }}" value="{{ initial }}">
-                {% endif %}
-                {% endif %}
-                {% else %}
-                <input type="text" class="form-control bg-light" name="{{ field }}" value="{{ initial_values.get(field, '') if initial_values else '' }}" readonly>
-                {% endif %}
-            </div>
+        <div class="mb-3">
+            <label class="form-label fw-medium">{{ field }}</label>
+            {% if field in editable_fields %}
+            {% if status_field and field == status_field %}
+            <select class="form-select" name="{{ field }}">
+                {% for option in status_options %}
+                <option value="{{ option }}" {% if loop.first %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+            {% else %}
+            {% set input_type = field_input_types.get(field, 'text') %}
+            <input type="{{ input_type }}" class="form-control" name="{{ field }}" value="">
+            {% endif %}
+            {% else %}
+            <input type="text" class="form-control bg-light" name="{{ field }}" value="" readonly>
+            {% endif %}
         </div>
         {% endfor %}
-        </div>
     </div>
     <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
@@ -71,32 +34,3 @@
         </button>
     </div>
 </form>
-
-{% if module.slug == 'orders' %}
-<script>
-(function () {
-    const pointSelect = document.querySelector('.js-order-create-point');
-    const masterSelect = document.querySelector('.js-order-create-master');
-    if (!pointSelect || !masterSelect) return;
-
-    function applyMasterFilter() {
-        const pointId = String(pointSelect.value || '');
-        Array.from(masterSelect.options).forEach(function (option) {
-            if (!option.value) {
-                option.hidden = false;
-                return;
-            }
-            const locationId = String(option.dataset.locationId || '');
-            option.hidden = !!pointId && !!locationId && locationId !== pointId;
-        });
-        const selected = masterSelect.selectedOptions && masterSelect.selectedOptions[0];
-        if (selected && selected.hidden) {
-            masterSelect.value = '';
-        }
-    }
-
-    pointSelect.addEventListener('change', applyMasterFilter);
-    applyMasterFilter();
-})();
-</script>
-{% endif %}

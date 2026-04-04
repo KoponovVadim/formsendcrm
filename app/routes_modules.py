@@ -7,6 +7,8 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func, delete as sa_delete, case, or_, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
+from typing import Any
 import re
 
 from app.database import get_db
@@ -14,10 +16,9 @@ from app.models import DynamicRecord, ModuleConfig
 from app.auth import (
     get_current_user, get_user_permissions, check_module_visible,
     get_visible_fields, get_editable_fields, filter_visible_modules_for_user, get_user_specializations,
-    can_manage_logistics, can_manage_services,
 )
 from app.schema_loader import get_all_modules, get_module_by_slug
-from models.crm import Executor, Location
+from models.crm import Order as CRMOrder
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
@@ -49,157 +50,22 @@ DEFAULT_STATUS_COLORS = {
 }
 
 SORT_OPTIONS = {"newest", "oldest", "updated_desc", "updated_asc"}
-COMPLETED_STATUS_KEYS = {
-    "выдан",
-    "отменен",
-    "завершен",
-    "закрыт",
-    "выдан клиенту",
-    "cancelled",
-    "canceled",
-    "completed",
-    "closed",
-}
 
-REPAIR_STATUS_OPTIONS = [
-    "Ожидает доставки в ремонт",
-    "В ремонте",
-    "Готов",
-    "Выдан",
-    "Отменён",
-]
-LOGISTICS_STATUS_OPTIONS = [
-    "pending_pickup",
-    "in_transit_to_service",
-    "at_service",
-    "in_transit_back",
-    "delivered",
+PRICE_FIELD_KEYWORDS = ("цена", "стоим", "сумм", "price", "cost", "total")
+DATE_FIELD_KEYWORDS = ("дата", "date", "deadline", "дедлайн", "гарант", "warranty")
+
+ORDER_MAIN_FIELD_CANDIDATES = [
+    ["№ заказа", "номер заказа", "заказ"],
+    ["Дата приёма", "дата приема", "принят", "дата"],
+    ["Клиент", "контакт", "фио"],
+    ["Устройство", "девайс", "модель"],
+    ["Неисправность", "проблем", "полом"],
+    ["Мастер", "исполнитель", "партнер", "партнёр"],
+    ["Статус"],
 ]
 
-REPAIR_STATUS_LABELS = {
-    "Ожидает доставки в ремонт": "Ожидает доставки в ремонт",
-    "В ремонте": "В ремонте",
-    "Готов": "Готов",
-    "Выдан": "Выдан",
-    "Отменён": "Отменён",
-}
-
-LOGISTICS_STATUS_LABELS = {
-    "pending_pickup": "Ожидает забора",
-    "in_transit_to_service": "В пути в сервис",
-    "at_service": "В сервисе",
-    "in_transit_back": "В пути обратно",
-    "delivered": "Доставлен",
-}
-
-def _normalize_repair_status(value: str) -> str:
-    key = _status_key(value)
-    mapping = {
-        "ожидает доставки в ремонт": "Ожидает доставки в ремонт",
-        "новый": "Ожидает доставки в ремонт",
-        "new": "Ожидает доставки в ремонт",
-        "в ремонте": "В ремонте",
-        "в работе": "В ремонте",
-        "in_progress": "В ремонте",
-        "готов": "Готов",
-        "ready": "Готов",
-        "ожидает выдачи": "Готов",
-        "едет на выдачу": "Готов",
-        "выдан": "Выдан",
-        "done": "Выдан",
-        "отменен": "Отменён",
-        "отменён": "Отменён",
-        "cancelled": "Отменён",
-        "canceled": "Отменён",
-    }
-    return mapping.get(key, "Ожидает доставки в ремонт")
-
-
-def _extract_user_point_id(user) -> int | None:
-    direct_point_id = getattr(user, "point_id", None)
-    if direct_point_id is not None:
-        try:
-            value = int(direct_point_id)
-            if value > 0:
-                return value
-        except (TypeError, ValueError):
-            pass
-
-    raw = str(getattr(user, "specialization", "") or "")
-    match = re.search(r"(?:point_id|point|location)\s*[:=]\s*(\d+)", raw, re.IGNORECASE)
-    if not match:
-        return None
-    try:
-        value = int(match.group(1))
-    except ValueError:
-        return None
-    return value if value > 0 else None
-
-
-def _should_limit_orders_by_point(user) -> bool:
-    if getattr(user, "is_superuser", False):
-        return False
-
-    permissions = get_user_permissions(user)
-    orders_perms = permissions.get("orders") if isinstance(permissions, dict) else None
-    if isinstance(orders_perms, dict):
-        if bool(orders_perms.get("all_points")):
-            return False
-        if "point_scope" in orders_perms:
-            return bool(orders_perms.get("point_scope"))
-
-    # Users with broader operations permissions should see full order flow.
-    if can_manage_logistics(user) or can_manage_services(user):
-        return False
-
-    # Apply point scoping only when user is explicitly bound to a point.
-    return _extract_user_point_id(user) is not None
-
-
-def _get_order_point_and_master_fields(all_fields: list[str]) -> tuple[str | None, str | None]:
-    point_field = _find_field_name_by_candidates(all_fields, ["Точка", "Локация", "Филиал", "Point", "Location"])
-    master_field = _find_field_name_by_candidates(all_fields, ["Мастер", "Исполнитель", "Executor", "Master"])
-    return point_field, master_field
-
-
-def _display_status_to_repair_status(display_status: str) -> str:
-    return _normalize_repair_status(display_status)
-
-
-def _derive_repair_status(order_data: dict, status_field: str | None) -> str:
-    raw_repair = str(order_data.get("__repair_status__", "")).strip()
-    if raw_repair:
-        return _normalize_repair_status(raw_repair)
-    if status_field:
-        return _display_status_to_repair_status(str(order_data.get(status_field, "")))
-    return "Ожидает доставки в ремонт"
-
-
-def _derive_logistics_status(order_data: dict) -> str:
-    raw_logistics = str(order_data.get("__logistics_status__", "")).strip().lower()
-    if raw_logistics in LOGISTICS_STATUS_OPTIONS:
-        return raw_logistics
-    return "pending_pickup"
-
-
-def _derive_display_status_for_order(order_data: dict, status_field: str | None) -> str:
-    if not status_field:
-        return ""
-    repair_status = _derive_repair_status(order_data, status_field)
-    return repair_status
-
-
-def _apply_order_status_automation(order_data: dict, status_field: str | None) -> dict:
-    data = dict(order_data or {})
-    repair_status = _normalize_repair_status(_derive_repair_status(data, status_field))
-    logistics_status = _derive_logistics_status(data)
-
-    # Keep repair and logistics independent so both axes can be edited freely.
-    data["__repair_status__"] = repair_status
-    data["__logistics_status__"] = logistics_status
-    if status_field:
-        data[status_field] = repair_status
-    return data
+READONLY_DERIVED_MODULE_SLUGS = {"finance", "analytics"}
+SYNC_HIDDEN_MODULE_SLUGS = {"analytics"}
 
 
 def _find_field_name_by_candidates(field_names: list[str], candidates: list[str]) -> str | None:
@@ -225,6 +91,536 @@ def _parse_float(value: str | None) -> float:
         return float(raw)
     except ValueError:
         return 0.0
+
+
+def _field_schema_map(module: ModuleConfig) -> dict[str, dict]:
+    mapping: dict[str, dict] = {}
+    for field in (module.fields_schema or []):
+        if not isinstance(field, dict):
+            continue
+        name = str(field.get("name", "")).strip()
+        if not name:
+            continue
+        mapping[name] = field
+    return mapping
+
+
+def _is_price_like_field(field_name: str) -> bool:
+    lowered = str(field_name or "").strip().lower()
+    if not lowered:
+        return False
+    return any(keyword in lowered for keyword in PRICE_FIELD_KEYWORDS)
+
+
+def _filter_module_visible_fields(slug: str, field_names: list[str]) -> list[str]:
+    if slug != "orders":
+        return list(field_names)
+    return [name for name in field_names if not _is_price_like_field(name)]
+
+
+def _split_order_fields_for_compact_table(field_names: list[str]) -> tuple[list[str], list[str]]:
+    if not field_names:
+        return [], []
+
+    remaining = list(field_names)
+    selected_main: list[str] = []
+
+    for candidates in ORDER_MAIN_FIELD_CANDIDATES:
+        match = _find_field_name_by_candidates(remaining, candidates)
+        if not match:
+            continue
+        selected_main.append(match)
+        remaining = [field_name for field_name in remaining if field_name != match]
+
+    if len(selected_main) < 6:
+        for field_name in remaining:
+            if len(selected_main) >= 6:
+                break
+            selected_main.append(field_name)
+
+    selected_main_set = set(selected_main)
+    main_fields = [field_name for field_name in field_names if field_name in selected_main_set]
+    detail_fields = [field_name for field_name in field_names if field_name not in selected_main_set]
+    return main_fields, detail_fields
+
+
+def _is_date_field(field_name: str, field_schema: dict | None) -> bool:
+    field_type = str((field_schema or {}).get("type", "")).strip().lower()
+    if field_type in {"date", "datetime", "datetime-local", "timestamp"}:
+        return True
+
+    lowered = str(field_name or "").strip().lower()
+    if not lowered:
+        return False
+    return any(keyword in lowered for keyword in DATE_FIELD_KEYWORDS)
+
+
+def _resolve_field_input_types(module: ModuleConfig, field_names: list[str]) -> dict[str, str]:
+    schema_by_name = _field_schema_map(module)
+    return {
+        field_name: "date" if _is_date_field(field_name, schema_by_name.get(field_name)) else "text"
+        for field_name in field_names
+    }
+
+
+def _to_date_input_value(value) -> str:
+    if isinstance(value, date):
+        return value.isoformat()
+
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    candidate = raw
+    if "T" in candidate:
+        candidate = candidate.split("T", 1)[0]
+    if " " in candidate and re.match(r"^\d{4}-\d{2}-\d{2}\s", raw):
+        candidate = candidate.split(" ", 1)[0]
+
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", candidate):
+        return candidate
+
+    date_formats = [
+        "%d.%m.%Y",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y.%m.%d",
+        "%Y/%m/%d",
+        "%d.%m.%y",
+    ]
+    for fmt in date_formats:
+        for source in (raw, candidate):
+            try:
+                return datetime.strptime(source, fmt).date().isoformat()
+            except ValueError:
+                continue
+
+    return ""
+
+
+def _is_order_derived_module_readonly(slug: str) -> bool:
+    return str(slug or "").strip().lower() in READONLY_DERIVED_MODULE_SLUGS
+
+
+def _is_sync_hidden_for_module(slug: str) -> bool:
+    return str(slug or "").strip().lower() in SYNC_HIDDEN_MODULE_SLUGS
+
+
+def _module_field_names(module: ModuleConfig | None) -> list[str]:
+    if not module:
+        return []
+    return [
+        str(field.get("name", "")).strip()
+        for field in (module.fields_schema or [])
+        if isinstance(field, dict) and str(field.get("name", "")).strip()
+    ]
+
+
+def _normalize_order_no(value: str) -> str:
+    return str(value or "").strip().upper()
+
+
+def _format_amount(value: float) -> str:
+    try:
+        numeric = round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return "0"
+    if float(numeric).is_integer():
+        return str(int(numeric))
+    return f"{numeric:.2f}"
+
+
+def _record_matches_search(data: dict[str, Any], search: str) -> bool:
+    needle = str(search or "").strip().lower()
+    if not needle:
+        return True
+    haystack = " ".join(str(value or "") for value in data.values()).lower()
+    return needle in haystack
+
+
+def _record_updated_at(record: Any) -> datetime:
+    value = getattr(record, "updated_at", None)
+    if isinstance(value, datetime):
+        return value
+    return datetime.now(timezone.utc)
+
+
+def _record_row_index(record: Any) -> int:
+    try:
+        return int(getattr(record, "row_index", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _sort_in_memory_records(records: list[Any], sort: str) -> list[Any]:
+    if sort == "oldest":
+        return sorted(records, key=lambda rec: (_record_row_index(rec), _record_updated_at(rec)))
+    if sort == "updated_desc":
+        return sorted(records, key=lambda rec: (_record_updated_at(rec), _record_row_index(rec)), reverse=True)
+    if sort == "updated_asc":
+        return sorted(records, key=lambda rec: (_record_updated_at(rec), _record_row_index(rec)))
+    return sorted(records, key=lambda rec: (_record_row_index(rec), _record_updated_at(rec)), reverse=True)
+
+
+def _parse_date_value(value) -> date | None:
+    iso = _to_date_input_value(value)
+    if not iso:
+        return None
+    try:
+        return datetime.strptime(iso, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _resolve_orders_period_field(field_names: list[str]) -> str | None:
+    return _find_field_name_by_candidates(
+        field_names,
+        ["Дата приёма", "дата приема", "Дата выдачи", "выдачи", "дата"],
+    )
+
+
+def _record_matches_period(
+    record: Any,
+    date_field: str | None,
+    period_from: date | None,
+    period_to: date | None,
+) -> bool:
+    if not date_field or (not period_from and not period_to):
+        return True
+
+    data = dict(getattr(record, "data", {}) or {})
+    record_date = _parse_date_value(data.get(date_field, ""))
+    if not record_date:
+        return False
+
+    if period_from and record_date < period_from:
+        return False
+    if period_to and record_date > period_to:
+        return False
+    return True
+
+
+async def _build_crm_orders_index(db: AsyncSession) -> dict[str, dict[str, Any]]:
+    rows = (
+        await db.execute(
+            select(CRMOrder.order_no, CRMOrder.total_amount, CRMOrder.created_at, CRMOrder.updated_at)
+        )
+    ).all()
+    result: dict[str, dict[str, Any]] = {}
+    for order_no, total_amount, created_at, updated_at in rows:
+        key = _normalize_order_no(str(order_no or ""))
+        if not key:
+            continue
+        result[key] = {
+            "total_amount": float(total_amount or 0),
+            "created_at": created_at,
+            "updated_at": updated_at,
+        }
+    return result
+
+
+async def _build_finance_legacy_index(db: AsyncSession) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+    finance_module = await get_module_by_slug(db, "finance")
+    finance_fields = _module_field_names(finance_module)
+    order_no_field = _find_field_name_by_candidates(finance_fields, ["№ заказа", "номер заказа", "номер", "заказ"])
+    client_price_field = _find_field_name_by_candidates(finance_fields, ["Цена для клиента", "цена", "сумма"])
+    salary_field = _find_field_name_by_candidates(finance_fields, ["Зарплата мастера", "зарплата"])
+    status_order_payment_field = _find_field_name_by_candidates(finance_fields, ["Статус оплаты заказа", "оплаты заказа"])
+    status_staff_payment_field = _find_field_name_by_candidates(finance_fields, ["Статус оплаты сотруднику", "оплаты сотруднику"])
+
+    metadata = {
+        "order_no_field": order_no_field or "",
+        "client_price_field": client_price_field or "",
+        "salary_field": salary_field or "",
+        "status_order_payment_field": status_order_payment_field or "",
+        "status_staff_payment_field": status_staff_payment_field or "",
+    }
+
+    if not order_no_field:
+        return {}, metadata
+
+    rows = (
+        await db.execute(
+            select(DynamicRecord)
+            .where(DynamicRecord.module_slug == "finance")
+            .order_by(DynamicRecord.row_index.desc())
+        )
+    ).scalars().all()
+
+    result: dict[str, dict[str, Any]] = {}
+    for record in rows:
+        data = dict(record.data or {})
+        order_no = str(data.get(order_no_field, "")).strip()
+        if not order_no:
+            continue
+        key = _normalize_order_no(order_no)
+        if key not in result:
+            result[key] = data
+
+    return result, metadata
+
+
+async def _build_supplies_cost_by_order_no(db: AsyncSession) -> dict[str, float]:
+    supplies_module = await get_module_by_slug(db, "supplies")
+    supplies_fields = _module_field_names(supplies_module)
+    if not supplies_fields:
+        return {}
+
+    order_ref_field = _find_field_name_by_candidates(supplies_fields, ["№ заказа", "номер заказа", "заказ"])
+    origin_field = _find_field_name_by_candidates(supplies_fields, ["Происхождение", "источник", "origin"])
+    cost_field = _find_field_name_by_candidates(supplies_fields, ["Стоимость", "цена", "себестоимость"])
+    if not cost_field:
+        return {}
+
+    rows = (
+        await db.execute(
+            select(DynamicRecord)
+            .where(DynamicRecord.module_slug == "supplies")
+            .order_by(DynamicRecord.row_index.desc())
+        )
+    ).scalars().all()
+
+    order_re = re.compile(r"заказ\s*[№:#-]*\s*([\w\-/]+)", re.IGNORECASE)
+    result: dict[str, float] = {}
+    for record in rows:
+        data = dict(record.data or {})
+        order_no = str(data.get(order_ref_field or "", "")).strip() if order_ref_field else ""
+
+        if not order_no and origin_field:
+            origin_text = str(data.get(origin_field, "")).strip()
+            found = order_re.search(origin_text)
+            if found:
+                order_no = str(found.group(1) or "").strip()
+
+        if not order_no:
+            continue
+
+        key = _normalize_order_no(order_no)
+        result[key] = result.get(key, 0.0) + _parse_float(str(data.get(cost_field, "0")))
+
+    return result
+
+
+async def _build_finance_records_from_orders(db: AsyncSession, module: ModuleConfig) -> list[SimpleNamespace]:
+    target_fields = _module_field_names(module)
+    orders_module = await get_module_by_slug(db, "orders")
+    order_fields = _module_field_names(orders_module)
+    if not order_fields:
+        return []
+
+    order_no_source_field = _find_field_name_by_candidates(order_fields, ["№ заказа", "номер заказа", "номер", "заказ"])
+    order_issued_source_field = _find_field_name_by_candidates(order_fields, ["Дата выдачи", "выдачи"])
+    order_accepted_source_field = _find_field_name_by_candidates(order_fields, ["Дата приёма", "дата приема", "дата"])
+    if not order_no_source_field:
+        return []
+
+    finance_order_no_field = _find_field_name_by_candidates(target_fields, ["№ заказа", "номер заказа", "номер", "заказ"])
+    finance_issued_field = _find_field_name_by_candidates(target_fields, ["Дата выдачи", "выдачи", "дата"])
+    finance_client_price_field = _find_field_name_by_candidates(target_fields, ["Цена для клиента", "цена", "сумма"])
+    finance_work_cost_field = _find_field_name_by_candidates(target_fields, ["Стоимость работы", "работы"])
+    finance_parts_cost_field = _find_field_name_by_candidates(target_fields, ["Запчасти себестоимость", "запчаст", "себестоимость"])
+    finance_salary_field = _find_field_name_by_candidates(target_fields, ["Зарплата мастера", "зарплата"])
+    finance_net_field = _find_field_name_by_candidates(target_fields, ["Чистая прибыль", "прибыль"])
+    finance_order_payment_field = _find_field_name_by_candidates(target_fields, ["Статус оплаты заказа", "оплаты заказа"])
+    finance_staff_payment_field = _find_field_name_by_candidates(target_fields, ["Статус оплаты сотруднику", "оплаты сотруднику"])
+
+    supplies_cost_by_order = await _build_supplies_cost_by_order_no(db)
+    crm_orders = await _build_crm_orders_index(db)
+    finance_legacy_index, finance_legacy_meta = await _build_finance_legacy_index(db)
+
+    order_records = (
+        await db.execute(
+            select(DynamicRecord)
+            .where(DynamicRecord.module_slug == "orders")
+            .order_by(DynamicRecord.row_index.desc())
+        )
+    ).scalars().all()
+
+    derived_rows: list[SimpleNamespace] = []
+    for source in order_records:
+        source_data = dict(source.data or {})
+        order_no = str(source_data.get(order_no_source_field, "")).strip()
+        if not order_no:
+            continue
+
+        key = _normalize_order_no(order_no)
+        crm_row = crm_orders.get(key, {})
+        legacy_row = finance_legacy_index.get(key, {})
+
+        total_amount = float(crm_row.get("total_amount", 0.0) or 0.0)
+        if not total_amount and finance_legacy_meta.get("client_price_field"):
+            total_amount = _parse_float(str(legacy_row.get(finance_legacy_meta["client_price_field"], "0")))
+
+        supplies_cost = float(supplies_cost_by_order.get(key, 0.0) or 0.0)
+        salary_field_name = finance_legacy_meta.get("salary_field") or finance_salary_field or ""
+        salary_amount = _parse_float(str(legacy_row.get(salary_field_name, "0"))) if salary_field_name else 0.0
+        work_cost = max(total_amount - supplies_cost, 0.0)
+        net_profit = total_amount - supplies_cost - salary_amount
+
+        issued_at = ""
+        if order_issued_source_field:
+            issued_at = str(source_data.get(order_issued_source_field, "")).strip()
+        if not issued_at and order_accepted_source_field:
+            issued_at = str(source_data.get(order_accepted_source_field, "")).strip()
+        if not issued_at and isinstance(crm_row.get("created_at"), datetime):
+            issued_at = str(crm_row["created_at"].date().isoformat())
+
+        row_data = {field_name: str(legacy_row.get(field_name, "")) for field_name in target_fields}
+        if finance_order_no_field:
+            row_data[finance_order_no_field] = order_no
+        if finance_issued_field:
+            row_data[finance_issued_field] = issued_at
+        if finance_client_price_field:
+            row_data[finance_client_price_field] = _format_amount(total_amount)
+        if finance_work_cost_field:
+            row_data[finance_work_cost_field] = _format_amount(work_cost)
+        if finance_parts_cost_field:
+            row_data[finance_parts_cost_field] = _format_amount(supplies_cost)
+        if finance_salary_field:
+            row_data[finance_salary_field] = _format_amount(salary_amount)
+        if finance_net_field:
+            row_data[finance_net_field] = _format_amount(net_profit)
+
+        if finance_order_payment_field and finance_legacy_meta.get("status_order_payment_field"):
+            row_data[finance_order_payment_field] = str(
+                legacy_row.get(finance_legacy_meta["status_order_payment_field"], "")
+            )
+        if finance_staff_payment_field and finance_legacy_meta.get("status_staff_payment_field"):
+            row_data[finance_staff_payment_field] = str(
+                legacy_row.get(finance_legacy_meta["status_staff_payment_field"], "")
+            )
+
+        updated_at = source.updated_at if isinstance(source.updated_at, datetime) else crm_row.get("updated_at")
+        if not isinstance(updated_at, datetime):
+            updated_at = datetime.now(timezone.utc)
+
+        source_id = int(getattr(source, "id", 0) or 0)
+        source_row_index = int(getattr(source, "row_index", len(derived_rows) + 1) or (len(derived_rows) + 1))
+        derived_rows.append(
+            SimpleNamespace(
+                id=-source_id if source_id else -(len(derived_rows) + 1),
+                row_index=source_row_index,
+                data=row_data,
+                updated_at=updated_at,
+            )
+        )
+
+    return derived_rows
+
+
+async def _build_analytics_records_from_orders(db: AsyncSession, module: ModuleConfig) -> list[SimpleNamespace]:
+    target_fields = _module_field_names(module)
+    orders_module = await get_module_by_slug(db, "orders")
+    order_fields = _module_field_names(orders_module)
+    if not order_fields:
+        return []
+
+    order_no_source_field = _find_field_name_by_candidates(order_fields, ["№ заказа", "номер заказа", "номер", "заказ"])
+    order_issued_source_field = _find_field_name_by_candidates(order_fields, ["Дата выдачи", "выдачи"])
+    order_accepted_source_field = _find_field_name_by_candidates(order_fields, ["Дата приёма", "дата приема", "дата"])
+    if not order_no_source_field:
+        return []
+
+    month_field = _find_field_name_by_candidates(target_fields, ["Месяц", "month"])
+    revenue_field = _find_field_name_by_candidates(target_fields, ["Выручка", "доход"])
+    parts_cost_field = _find_field_name_by_candidates(target_fields, ["Затраты (запчасти)", "запчаст"])
+    supplies_cost_field = _find_field_name_by_candidates(target_fields, ["Затраты (расходники)", "расход"])
+    salary_field = _find_field_name_by_candidates(target_fields, ["Выплаты (зарплата)", "зарплат"])
+    net_field = _find_field_name_by_candidates(target_fields, ["Чистая прибыль", "прибыль"])
+
+    supplies_cost_by_order = await _build_supplies_cost_by_order_no(db)
+    crm_orders = await _build_crm_orders_index(db)
+    finance_legacy_index, finance_legacy_meta = await _build_finance_legacy_index(db)
+
+    order_records = (
+        await db.execute(
+            select(DynamicRecord)
+            .where(DynamicRecord.module_slug == "orders")
+            .order_by(DynamicRecord.row_index.desc())
+        )
+    ).scalars().all()
+
+    monthly: dict[str, dict[str, float]] = {}
+    for source in order_records:
+        source_data = dict(source.data or {})
+        order_no = str(source_data.get(order_no_source_field, "")).strip()
+        if not order_no:
+            continue
+
+        key = _normalize_order_no(order_no)
+        crm_row = crm_orders.get(key, {})
+        legacy_row = finance_legacy_index.get(key, {})
+
+        total_amount = float(crm_row.get("total_amount", 0.0) or 0.0)
+        if not total_amount and finance_legacy_meta.get("client_price_field"):
+            total_amount = _parse_float(str(legacy_row.get(finance_legacy_meta["client_price_field"], "0")))
+
+        supplies_cost = float(supplies_cost_by_order.get(key, 0.0) or 0.0)
+        salary_amount = 0.0
+        if finance_legacy_meta.get("salary_field"):
+            salary_amount = _parse_float(str(legacy_row.get(finance_legacy_meta["salary_field"], "0")))
+
+        order_date = None
+        if order_issued_source_field:
+            order_date = _parse_date_value(source_data.get(order_issued_source_field, ""))
+        if not order_date and order_accepted_source_field:
+            order_date = _parse_date_value(source_data.get(order_accepted_source_field, ""))
+        if not order_date and isinstance(crm_row.get("created_at"), datetime):
+            order_date = crm_row["created_at"].date()
+        if not order_date:
+            continue
+
+        month_key = f"{order_date.year:04d}-{order_date.month:02d}"
+        bucket = monthly.setdefault(
+            month_key,
+            {
+                "revenue": 0.0,
+                "parts_cost": 0.0,
+                "supplies_cost": 0.0,
+                "salary": 0.0,
+            },
+        )
+        bucket["revenue"] += total_amount
+        bucket["supplies_cost"] += supplies_cost
+        bucket["salary"] += salary_amount
+
+    derived_rows: list[SimpleNamespace] = []
+    for index, month_key in enumerate(sorted(monthly.keys(), reverse=True), start=1):
+        bucket = monthly[month_key]
+        net_profit = bucket["revenue"] - bucket["parts_cost"] - bucket["supplies_cost"] - bucket["salary"]
+
+        row_data = {field_name: "" for field_name in target_fields}
+        if month_field:
+            row_data[month_field] = month_key
+        if revenue_field:
+            row_data[revenue_field] = _format_amount(bucket["revenue"])
+        if parts_cost_field:
+            row_data[parts_cost_field] = _format_amount(bucket["parts_cost"])
+        if supplies_cost_field:
+            row_data[supplies_cost_field] = _format_amount(bucket["supplies_cost"])
+        if salary_field:
+            row_data[salary_field] = _format_amount(bucket["salary"])
+        if net_field:
+            row_data[net_field] = _format_amount(net_profit)
+
+        derived_rows.append(
+            SimpleNamespace(
+                id=-(100000 + index),
+                row_index=index,
+                data=row_data,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+
+    return derived_rows
+
+
+async def _build_derived_records_from_orders(db: AsyncSession, module: ModuleConfig) -> list[SimpleNamespace]:
+    if module.slug == "finance":
+        return await _build_finance_records_from_orders(db, module)
+    if module.slug == "analytics":
+        return await _build_analytics_records_from_orders(db, module)
+    return []
 
 
 async def _get_order_supplies_context(
@@ -434,245 +830,6 @@ def _row_bg_for_status(status_value: str, status_colors: dict[str, str]) -> str:
     return ""
 
 
-async def _sync_order_dependencies(db: AsyncSession, order_data: dict) -> None:
-    """Propagate shared order fields to related modules by order number."""
-    if not isinstance(order_data, dict):
-        return
-
-    order_module = await get_module_by_slug(db, "orders")
-    if not order_module:
-        return
-
-    order_field_names = [f.get("name", "") for f in (order_module.fields_schema or []) if isinstance(f, dict)]
-    order_no_field = _find_field_name_by_candidates(order_field_names, ["№ заказа", "номер заказа", "номер", "заказ"])
-    order_no = str(order_data.get(order_no_field or "", "")).strip()
-    if not order_no:
-        return
-
-    source_order_field = _find_field_name_by_candidates(order_field_names, ["№ заказа", "номер заказа", "номер", "заказ"])
-    source_client_field = _find_field_name_by_candidates(order_field_names, ["Клиент", "ФИО", "client", "name"])
-    source_status_field = _find_field_name_by_candidates(order_field_names, ["Статус", "Статус заказа", "status"])
-    source_accepted_field = _find_field_name_by_candidates(order_field_names, ["Дата приёма", "Дата приема", "accept_date", "accepted_at"])
-    source_device_field = _find_field_name_by_candidates(order_field_names, ["Устройство", "device"])
-    source_issue_field = _find_field_name_by_candidates(order_field_names, ["Неисправность", "проблема", "issue"])
-    source_master_field = _find_field_name_by_candidates(order_field_names, ["Мастер", "исполнитель", "master"])
-    source_deadline_field = _find_field_name_by_candidates(order_field_names, ["Дедлайн", "deadline"])
-    source_issued_field = _find_field_name_by_candidates(order_field_names, ["Дата выдачи", "выдача", "issued", "issue date"])
-    source_warranty_field = _find_field_name_by_candidates(order_field_names, ["Гарантия до", "гарантия", "warranty"])
-
-    dependent_modules = ["clients", "finance", "warranty", "analytics"]
-    now = datetime.now(timezone.utc)
-
-    issued_value = str(order_data.get(source_issued_field or "", "") or "") if source_issued_field else ""
-    issued_date = issued_value.strip() or date.today().isoformat()
-    issued_month = issued_date[:7] if len(issued_date) >= 7 else date.today().strftime("%Y-%m")
-
-    related_values = {
-        "order_no": order_no,
-        "client": str(order_data.get(source_client_field or "", "") or "") if source_client_field else "",
-        "status": str(order_data.get(source_status_field or "", "") or "") if source_status_field else "",
-        "accepted": str(order_data.get(source_accepted_field or "", "") or "") if source_accepted_field else "",
-        "device": str(order_data.get(source_device_field or "", "") or "") if source_device_field else "",
-        "issue": str(order_data.get(source_issue_field or "", "") or "") if source_issue_field else "",
-        "master": str(order_data.get(source_master_field or "", "") or "") if source_master_field else "",
-        "deadline": str(order_data.get(source_deadline_field or "", "") or "") if source_deadline_field else "",
-        "issued": issued_value,
-        "warranty": str(order_data.get(source_warranty_field or "", "") or "") if source_warranty_field else "",
-        "month": issued_month,
-    }
-
-    for dependent_slug in dependent_modules:
-        dependent_module = await get_module_by_slug(db, dependent_slug)
-        if not dependent_module:
-            continue
-
-        target_field_names = [f.get("name", "") for f in (dependent_module.fields_schema or []) if isinstance(f, dict)]
-        target_order_field = _find_field_name_by_candidates(target_field_names, ["№ заказа", "номер заказа", "номер", "заказ"])
-        if dependent_slug != "analytics" and not target_order_field:
-            continue
-
-        if dependent_slug == "analytics":
-            month_field = _find_field_name_by_candidates(target_field_names, ["Месяц", "month"])
-            if not month_field:
-                continue
-            related_records = (
-                await db.execute(
-                    select(DynamicRecord).where(
-                        DynamicRecord.module_slug == dependent_slug,
-                        cast(DynamicRecord.data[month_field], String) == related_values["month"],
-                    )
-                )
-            ).scalars().all()
-            if not related_records:
-                max_row = (
-                    await db.execute(select(func.max(DynamicRecord.row_index)).where(DynamicRecord.module_slug == dependent_slug))
-                ).scalar() or 1
-                draft_data: dict[str, str] = {name: "" for name in target_field_names}
-                draft_data[month_field] = related_values["month"]
-                for money_field in [
-                    _find_field_name_by_candidates(target_field_names, ["Выручка"]),
-                    _find_field_name_by_candidates(target_field_names, ["Затраты (запчасти)"]),
-                    _find_field_name_by_candidates(target_field_names, ["Затраты (расходники)"]),
-                    _find_field_name_by_candidates(target_field_names, ["Выплаты (зарплата)"]),
-                    _find_field_name_by_candidates(target_field_names, ["Чистая прибыль"]),
-                ]:
-                    if money_field:
-                        draft_data[money_field] = str(draft_data.get(money_field, "") or "0")
-                db.add(
-                    DynamicRecord(
-                        module_slug=dependent_slug,
-                        row_index=max_row + 1,
-                        data=draft_data,
-                        updated_at=now,
-                    )
-                )
-            continue
-
-        related_records = (
-            await db.execute(
-                select(DynamicRecord).where(
-                    DynamicRecord.module_slug == dependent_slug,
-                    cast(DynamicRecord.data[target_order_field], String) == order_no,
-                )
-            )
-        ).scalars().all()
-
-        if not related_records:
-            max_row = (
-                await db.execute(select(func.max(DynamicRecord.row_index)).where(DynamicRecord.module_slug == dependent_slug))
-            ).scalar() or 1
-            draft_data: dict[str, str] = {name: "" for name in target_field_names}
-            draft_data[target_order_field] = order_no
-            related_records = [
-                DynamicRecord(
-                    module_slug=dependent_slug,
-                    row_index=max_row + 1,
-                    data=draft_data,
-                    updated_at=now,
-                )
-            ]
-            db.add(related_records[0])
-
-        target_client_field = _find_field_name_by_candidates(target_field_names, ["ФИО название", "Клиент", "client", "name"])
-        target_status_field = _find_field_name_by_candidates(target_field_names, ["Статус", "Статус заказа", "status"])
-        target_accepted_field = _find_field_name_by_candidates(target_field_names, ["Дата приёма", "Дата приема", "accept_date", "accepted_at"])
-        target_device_field = _find_field_name_by_candidates(target_field_names, ["Устройство", "device"])
-        target_issue_field = _find_field_name_by_candidates(target_field_names, ["Неисправность", "проблема", "issue"])
-        target_master_field = _find_field_name_by_candidates(target_field_names, ["Мастер", "исполнитель", "master"])
-        target_deadline_field = _find_field_name_by_candidates(target_field_names, ["Дедлайн", "deadline"])
-        target_issued_field = _find_field_name_by_candidates(target_field_names, ["Дата выдачи", "выдача", "issued", "issue date"])
-        target_warranty_field = _find_field_name_by_candidates(target_field_names, ["Гарантия до", "гарантия", "warranty"])
-
-        for related_record in related_records:
-            related_data = dict(related_record.data or {})
-            related_data[target_order_field] = related_values["order_no"]
-
-            if source_client_field and target_client_field:
-                related_data[target_client_field] = related_values["client"]
-            if source_status_field and target_status_field:
-                related_data[target_status_field] = related_values["status"]
-            if source_accepted_field and target_accepted_field:
-                related_data[target_accepted_field] = related_values["accepted"]
-            if source_device_field and target_device_field:
-                related_data[target_device_field] = related_values["device"]
-            if source_issue_field and target_issue_field:
-                related_data[target_issue_field] = related_values["issue"]
-            if source_master_field and target_master_field:
-                related_data[target_master_field] = related_values["master"]
-            if source_deadline_field and target_deadline_field:
-                related_data[target_deadline_field] = related_values["deadline"]
-            if source_issued_field and target_issued_field:
-                related_data[target_issued_field] = related_values["issued"]
-            if source_warranty_field and target_warranty_field:
-                related_data[target_warranty_field] = related_values["warranty"]
-
-            related_record.data = related_data
-            related_record.updated_at = now
-
-
-async def _validate_and_apply_order_assignment(
-    db: AsyncSession,
-    order_data: dict,
-    all_field_names: list[str],
-    require_point: bool = False,
-) -> dict:
-    data = dict(order_data or {})
-    point_field, master_field = _get_order_point_and_master_fields(all_field_names)
-
-    point_id_raw = str(data.get("__point_id__", "") or "").strip()
-    if not point_id_raw and point_field:
-        point_name = str(data.get(point_field, "") or "").strip().lower()
-        if point_name:
-            location = (
-                await db.execute(select(Location).where(func.lower(Location.name) == point_name))
-            ).scalar_one_or_none()
-            if location:
-                point_id_raw = str(int(location.id))
-
-    point_id = None
-    location = None
-    if point_id_raw.isdigit() and int(point_id_raw) > 0:
-        point_id = int(point_id_raw)
-        location = (
-            await db.execute(select(Location).where(Location.id == point_id, Location.is_active == True))
-        ).scalar_one_or_none()
-        if not location:
-            raise HTTPException(400, "Выбранная точка недоступна")
-
-    master_id_raw = str(data.get("__master_id__", "") or "").strip()
-    if not master_id_raw and master_field:
-        master_name = str(data.get(master_field, "") or "").strip().lower()
-        if master_name:
-            executor = (
-                await db.execute(select(Executor).where(func.lower(Executor.name) == master_name))
-            ).scalar_one_or_none()
-            if executor:
-                master_id_raw = str(int(executor.id))
-
-    if master_id_raw:
-        if not master_id_raw.isdigit() or int(master_id_raw) <= 0:
-            raise HTTPException(400, "Некорректный мастер")
-        master_id = int(master_id_raw)
-        executor = (
-            await db.execute(select(Executor).where(Executor.id == master_id, Executor.is_active == True))
-        ).scalar_one_or_none()
-        if not executor:
-            raise HTTPException(400, "Мастер не найден")
-
-        # If point is not selected, infer it from selected master's location.
-        if point_id is None and executor.location_id:
-            inferred_location = (
-                await db.execute(select(Location).where(Location.id == int(executor.location_id), Location.is_active == True))
-            ).scalar_one_or_none()
-            if inferred_location:
-                point_id = int(inferred_location.id)
-                location = inferred_location
-
-        if point_id is not None and (not executor.location_id or int(executor.location_id) != int(point_id)):
-            raise HTTPException(400, "Нельзя выбрать мастера из другой точки")
-        data["__master_id__"] = master_id
-        if master_field:
-            data[master_field] = str(executor.name or "")
-    else:
-        data["__master_id__"] = ""
-        if master_field:
-            data[master_field] = ""
-
-    if require_point and point_id is None:
-        raise HTTPException(400, "Необходимо выбрать точку ремонта")
-
-    if point_id is not None and location is not None:
-        data["__point_id__"] = point_id
-        if point_field:
-            data[point_field] = str(location.name)
-    else:
-        data["__point_id__"] = ""
-        if point_field:
-            data[point_field] = ""
-
-    return data
-
-
 @router.get("/modules/{slug}", response_class=HTMLResponse)
 async def module_list(
     request: Request,
@@ -680,7 +837,8 @@ async def module_list(
     page: int = 1,
     search: str = "",
     sort: str = "newest",
-    view: str = "kanban",
+    date_from: str = "",
+    date_to: str = "",
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -695,90 +853,105 @@ async def module_list(
     all_field_names = [f["name"] for f in module.fields_schema]
     status_field, status_options, status_colors = _extract_status_settings(module)
     specialization_field, _ = _extract_specialization_settings(module)
-    point_field, _ = _get_order_point_and_master_fields(all_field_names)
     user_specializations = get_user_specializations(user)
     visible_fields = get_visible_fields(permissions, slug, all_field_names, user.is_superuser)
     editable_fields = get_editable_fields(permissions, slug, all_field_names, user.is_superuser)
+    visible_fields = _filter_module_visible_fields(slug, visible_fields)
+    editable_fields = [field_name for field_name in editable_fields if field_name in visible_fields]
+    is_module_readonly = _is_order_derived_module_readonly(slug)
+    if is_module_readonly:
+        editable_fields = []
+
+    order_main_fields: list[str] = []
+    order_detail_fields: list[str] = []
+    if slug == "orders":
+        order_main_fields, order_detail_fields = _split_order_fields_for_compact_table(visible_fields)
+
+    period_from = _parse_date_value(date_from) if slug == "orders" else None
+    period_to = _parse_date_value(date_to) if slug == "orders" else None
+    if period_from and period_to and period_from > period_to:
+        period_from, period_to = period_to, period_from
+    period_field = _resolve_orders_period_field(all_field_names) if slug == "orders" else None
+    has_period_filter = bool(period_from or period_to)
 
     per_page = 25
     offset = (page - 1) * per_page
 
-    # Base query
-    stmt = select(DynamicRecord).where(DynamicRecord.module_slug == slug)
-
-    # Search filter
-    if search:
-        stmt = stmt.where(DynamicRecord.data.cast(str).ilike(f"%{search}%"))
-
-    # Partner specialization filter: show only own partner orders.
-    if not user.is_superuser and specialization_field and user_specializations:
-        lowered_specializations = [s.lower() for s in user_specializations]
-        partner_expr = func.lower(func.coalesce(cast(DynamicRecord.data[specialization_field], String), ""))
-        stmt = stmt.where(
-            or_(*[partner_expr.like(f"%{spec}%") for spec in lowered_specializations])
-        )
-
-    if slug == "orders" and _should_limit_orders_by_point(user):
-        user_point_id = _extract_user_point_id(user)
-        if user_point_id:
-            point_filters = []
-            point_expr = func.coalesce(cast(DynamicRecord.data["__point_id__"], String), "")
-            point_filters.append(point_expr == str(user_point_id))
-
-            if point_field:
-                location = (
-                    await db.execute(select(Location).where(Location.id == int(user_point_id)))
-                ).scalar_one_or_none()
-                if location and str(location.name or "").strip():
-                    legacy_point_expr = func.lower(func.coalesce(cast(DynamicRecord.data[point_field], String), ""))
-                    point_filters.append(legacy_point_expr == str(location.name).strip().lower())
-
-            stmt = stmt.where(or_(*point_filters))
-
     if sort not in SORT_OPTIONS:
         sort = "newest"
 
-    # Count
-    count_stmt = select(func.count()).select_from(
-        stmt.subquery()
-    )
-    total = (await db.execute(count_stmt)).scalar() or 0
-
-    if status_field:
-        status_expr = func.lower(func.coalesce(cast(DynamicRecord.data[status_field], String), ""))
-        completion_priority = case((status_expr.in_(tuple(COMPLETED_STATUS_KEYS)), 1), else_=0).asc()
+    if is_module_readonly:
+        in_memory_records = await _build_derived_records_from_orders(db, module)
+        if search:
+            in_memory_records = [
+                record
+                for record in in_memory_records
+                if _record_matches_search(dict(getattr(record, "data", {}) or {}), search)
+            ]
+        if has_period_filter:
+            in_memory_records = [
+                record
+                for record in in_memory_records
+                if _record_matches_period(record, period_field, period_from, period_to)
+            ]
+        total = len(in_memory_records)
+        records = _sort_in_memory_records(in_memory_records, sort)[offset: offset + per_page]
     else:
-        completion_priority = case((DynamicRecord.id > 0, 0), else_=0).asc()
+        # Base query
+        stmt = select(DynamicRecord).where(DynamicRecord.module_slug == slug)
 
-    # Paginated data
-    if sort == "oldest":
-        stmt = stmt.order_by(completion_priority, DynamicRecord.row_index.asc())
-    elif sort == "updated_desc":
-        stmt = stmt.order_by(completion_priority, DynamicRecord.updated_at.desc(), DynamicRecord.row_index.desc())
-    elif sort == "updated_asc":
-        stmt = stmt.order_by(completion_priority, DynamicRecord.updated_at.asc(), DynamicRecord.row_index.asc())
-    else:
-        stmt = stmt.order_by(completion_priority, DynamicRecord.row_index.desc())
+        # Search filter
+        if search:
+            stmt = stmt.where(DynamicRecord.data.cast(str).ilike(f"%{search}%"))
 
-    stmt = stmt.offset(offset).limit(per_page)
-    records = (await db.execute(stmt)).scalars().all()
+        # Partner specialization filter: show only own partner orders.
+        if not user.is_superuser and specialization_field and user_specializations:
+            lowered_specializations = [s.lower() for s in user_specializations]
+            partner_expr = func.lower(func.coalesce(cast(DynamicRecord.data[specialization_field], String), ""))
+            stmt = stmt.where(
+                or_(*[partner_expr.like(f"%{spec}%") for spec in lowered_specializations])
+            )
+
+        partner_issued_priority = case(
+            (func.lower(func.coalesce(cast(DynamicRecord.data["__partner_issued__"], String), "false")).like("%true%"), 1),
+            else_=0,
+        ).desc()
+
+        # Paginated data
+        if sort == "oldest":
+            stmt = stmt.order_by(partner_issued_priority, DynamicRecord.row_index.asc())
+        elif sort == "updated_desc":
+            stmt = stmt.order_by(partner_issued_priority, DynamicRecord.updated_at.desc(), DynamicRecord.row_index.desc())
+        elif sort == "updated_asc":
+            stmt = stmt.order_by(partner_issued_priority, DynamicRecord.updated_at.asc(), DynamicRecord.row_index.asc())
+        else:
+            stmt = stmt.order_by(partner_issued_priority, DynamicRecord.row_index.desc())
+
+        if has_period_filter:
+            all_records = (await db.execute(stmt)).scalars().all()
+            filtered_records = [
+                record
+                for record in all_records
+                if _record_matches_period(record, period_field, period_from, period_to)
+            ]
+            total = len(filtered_records)
+            records = filtered_records[offset: offset + per_page]
+        else:
+            # Count
+            count_stmt = select(func.count()).select_from(
+                stmt.subquery()
+            )
+            total = (await db.execute(count_stmt)).scalar() or 0
+
+            stmt = stmt.offset(offset).limit(per_page)
+            records = (await db.execute(stmt)).scalars().all()
 
     total_pages = max(1, (total + per_page - 1) // per_page)
     modules = await get_all_modules(db)
     modules = filter_visible_modules_for_user(modules, user)
-    if slug == "orders":
-        view_mode = "table" if view == "table" else "kanban"
-    else:
-        view_mode = "table"
 
-    kanban_groups: dict[str, list[DynamicRecord]] = {key: [] for key in REPAIR_STATUS_OPTIONS}
-    if slug == "orders":
-        for record in records:
-            record_data = dict(record.data or {})
-            repair_status = _derive_repair_status(record_data, status_field)
-            if repair_status not in kanban_groups:
-                repair_status = REPAIR_STATUS_OPTIONS[0]
-            kanban_groups[repair_status].append(record)
+    allow_sync_buttons = bool(user.is_superuser and not _is_sync_hidden_for_module(slug))
+    allow_add_button = not is_module_readonly
 
     ctx = {
         "request": request,
@@ -793,22 +966,24 @@ async def module_list(
         "total": total,
         "search": search,
         "sort": sort,
+        "date_from": period_from.isoformat() if period_from else "",
+        "date_to": period_to.isoformat() if period_to else "",
         "status_field": status_field,
         "status_options": status_options,
         "status_colors": status_colors,
         "row_bg_for_status": lambda value: _row_bg_for_status(value, status_colors),
         "partner_issued_field": "__partner_issued__",
-        "view_mode": view_mode,
-        "kanban_groups": kanban_groups,
-        "repair_status_options": REPAIR_STATUS_OPTIONS,
-        "logistics_status_options": LOGISTICS_STATUS_OPTIONS,
-        "repair_status_labels": REPAIR_STATUS_LABELS,
-        "logistics_status_labels": LOGISTICS_STATUS_LABELS,
+        "order_main_fields": order_main_fields,
+        "order_detail_fields": order_detail_fields,
+        "is_module_readonly": is_module_readonly,
+        "allow_sync_buttons": allow_sync_buttons,
+        "allow_add_button": allow_add_button,
+        "show_partner_issued_column": slug == "orders",
     }
 
     # HTMX partial
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse("partials/module_records_view.html", ctx)
+        return templates.TemplateResponse("partials/module_table.html", ctx)
 
     return templates.TemplateResponse("module_list.html", ctx)
 
@@ -818,7 +993,6 @@ async def record_detail(
     request: Request,
     slug: str,
     record_id: int,
-    panel: str = "modal",
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -829,6 +1003,8 @@ async def record_detail(
     permissions = get_user_permissions(user)
     if not check_module_visible(permissions, slug, user.is_superuser):
         raise HTTPException(403)
+    if _is_order_derived_module_readonly(slug):
+        raise HTTPException(403, "Модуль доступен только для просмотра")
 
     result = await db.execute(
         select(DynamicRecord).where(DynamicRecord.id == record_id, DynamicRecord.module_slug == slug)
@@ -841,6 +1017,9 @@ async def record_detail(
     status_field, status_options, _ = _extract_status_settings(module)
     visible_fields = get_visible_fields(permissions, slug, all_field_names, user.is_superuser)
     editable_fields = get_editable_fields(permissions, slug, all_field_names, user.is_superuser)
+    visible_fields = _filter_module_visible_fields(slug, visible_fields)
+    editable_fields = [field_name for field_name in editable_fields if field_name in visible_fields]
+    field_input_types = _resolve_field_input_types(module, visible_fields)
 
     modules = await get_all_modules(db)
     modules = filter_visible_modules_for_user(modules, user)
@@ -849,9 +1028,6 @@ async def record_detail(
     order_supplies_total = 0.0
     order_no = ""
     supplies_fields: dict[str, str] = {}
-    point_options: list[dict] = []
-    master_options: list[dict] = []
-    point_field, master_field = _get_order_point_and_master_fields(all_field_names)
 
     if slug == "orders":
         supplies_module = await get_module_by_slug(db, "supplies")
@@ -861,29 +1037,7 @@ async def record_detail(
         order_supplies_total = supplies_ctx["order_supplies_total"]
         supplies_fields = supplies_ctx["supplies_fields"]
 
-        locations = (
-            await db.execute(select(Location).where(Location.is_active == True).order_by(Location.name.asc()))
-        ).scalars().all()
-        executors = (
-            await db.execute(select(Executor).where(Executor.is_active == True).order_by(Executor.name.asc()))
-        ).scalars().all()
-        point_options = [{"id": int(loc.id), "name": str(loc.name)} for loc in locations]
-        master_options = [
-            {
-                "id": int(ex.id),
-                "name": str(ex.name or ""),
-                "location_id": int(ex.location_id) if ex.location_id else None,
-            }
-            for ex in executors
-        ]
-
-    record_data = dict(record.data or {})
-    current_repair_status = _derive_repair_status(record_data, status_field) if slug == "orders" else ""
-    current_logistics_status = _derive_logistics_status(record_data) if slug == "orders" else ""
-
-    template_name = "record_edit_drawer.html" if slug == "orders" and panel == "drawer" else "record_edit_modal.html"
-
-    return templates.TemplateResponse(template_name, {
+    return templates.TemplateResponse("record_edit_modal.html", {
         "request": request,
         "user": user,
         "module": module,
@@ -893,21 +1047,12 @@ async def record_detail(
         "editable_fields": editable_fields,
         "status_field": status_field,
         "status_options": status_options,
+        "field_input_types": field_input_types,
+        "to_date_input_value": _to_date_input_value,
         "order_no": order_no,
         "order_supplies": order_supplies,
         "order_supplies_total": order_supplies_total,
         "supplies_fields": supplies_fields,
-        "repair_status_options": REPAIR_STATUS_OPTIONS,
-        "logistics_status_options": LOGISTICS_STATUS_OPTIONS,
-        "logistics_status_labels": LOGISTICS_STATUS_LABELS,
-        "current_repair_status": current_repair_status,
-        "current_logistics_status": current_logistics_status,
-        "point_field": point_field,
-        "master_field": master_field,
-        "point_options": point_options,
-        "master_options": master_options,
-        "current_point_id": str(record_data.get("__point_id__", "") or ""),
-        "current_master_id": str(record_data.get("__master_id__", "") or ""),
     })
 
 
@@ -922,6 +1067,8 @@ async def record_update(
     module = await get_module_by_slug(db, slug)
     if not module:
         raise HTTPException(404)
+    if _is_order_derived_module_readonly(slug):
+        raise HTTPException(403, "Модуль доступен только для просмотра")
 
     permissions = get_user_permissions(user)
     all_field_names = [f["name"] for f in module.fields_schema]
@@ -941,37 +1088,9 @@ async def record_update(
         if field in form_data:
             new_data[field] = form_data[field]
 
-    if slug == "orders":
-        try:
-            if "__point_id__" in form_data:
-                new_data["__point_id__"] = str(form_data.get("__point_id__", "")).strip()
-            if "__master_id__" in form_data:
-                new_data["__master_id__"] = str(form_data.get("__master_id__", "")).strip()
-
-            if "__point_id__" in form_data or "__master_id__" in form_data:
-                new_data = await _validate_and_apply_order_assignment(db, new_data, all_field_names, require_point=False)
-
-            if "__repair_status__" in form_data:
-                new_data["__repair_status__"] = _normalize_repair_status(str(form_data.get("__repair_status__", "")))
-            if "__logistics_status__" in form_data:
-                logistics_raw = str(form_data.get("__logistics_status__", "")).strip().lower()
-                if logistics_raw and logistics_raw in LOGISTICS_STATUS_OPTIONS:
-                    new_data["__logistics_status__"] = logistics_raw
-            new_data = _apply_order_status_automation(new_data, status_field)
-        except HTTPException as exc:
-            if request.headers.get("HX-Request"):
-                return HTMLResponse(
-                    f'<div class="alert alert-danger">{str(exc.detail)}</div>',
-                    status_code=int(getattr(exc, "status_code", 400) or 400),
-                )
-            raise
-
     # Once client handoff is confirmed via status, remove temporary partner-issued priority.
     if status_field and status_field in new_data and _status_eq(str(new_data.get(status_field, "")), "Выдан"):
         new_data["__partner_issued__"] = False
-
-    if slug == "orders":
-        await _sync_order_dependencies(db, new_data)
 
     record.data = new_data
     record.updated_at = datetime.now(timezone.utc)
@@ -1124,6 +1243,8 @@ async def record_update_single_field(
     module = await get_module_by_slug(db, slug)
     if not module:
         raise HTTPException(404)
+    if _is_order_derived_module_readonly(slug):
+        raise HTTPException(403, "Модуль доступен только для просмотра")
 
     permissions = get_user_permissions(user)
     all_field_names = [f["name"] for f in module.fields_schema]
@@ -1131,8 +1252,6 @@ async def record_update_single_field(
 
     status_field, _, status_colors = _extract_status_settings(module)
     allowed_meta_fields = {"__partner_issued__"}
-    if slug == "orders":
-        allowed_meta_fields.update({"__repair_status__", "__logistics_status__", "__point_id__", "__master_id__"})
 
     if field not in all_field_names and field not in allowed_meta_fields:
         raise HTTPException(400, "Поле не найдено")
@@ -1140,7 +1259,7 @@ async def record_update_single_field(
         raise HTTPException(403, "Поле недоступно для редактирования")
 
     if status_field and field != status_field and field not in allowed_meta_fields:
-        raise HTTPException(400, "Inline-обновление разрешено только для статусных полей")
+        raise HTTPException(400, "Inline-обновление разрешено только для статуса и флага выдачи")
 
     result = await db.execute(
         select(DynamicRecord).where(DynamicRecord.id == record_id, DynamicRecord.module_slug == slug)
@@ -1158,34 +1277,9 @@ async def record_update_single_field(
             raise HTTPException(400, "Флаг выдачи доступен только для статусов 'Готов' и 'Выдан'")
         new_data[field] = str(value).strip().lower() in {"1", "true", "on", "yes"}
     else:
-        if field == "__repair_status__":
-            normalized_repair = _normalize_repair_status(str(value))
-            if normalized_repair not in REPAIR_STATUS_OPTIONS:
-                raise HTTPException(400, "Некорректный repair_status")
-
-            new_data[field] = normalized_repair
-        elif field == "__logistics_status__":
-            if str(value).strip().lower() not in LOGISTICS_STATUS_OPTIONS:
-                raise HTTPException(400, "Некорректный logistics_status")
-            new_data[field] = str(value).strip().lower()
-        elif field == "__point_id__":
-            new_data[field] = str(value).strip()
-            new_data["__master_id__"] = ""
-        elif field == "__master_id__":
-            new_data[field] = str(value).strip()
-        else:
-            new_data[field] = value
-
+        new_data[field] = value
         if status_field and field == status_field and _status_eq(str(value), "Выдан"):
             new_data["__partner_issued__"] = False
-
-        if slug == "orders":
-            if field in {"__point_id__", "__master_id__"}:
-                new_data = await _validate_and_apply_order_assignment(db, new_data, all_field_names, require_point=False)
-            new_data = _apply_order_status_automation(new_data, status_field)
-
-    if slug == "orders":
-        await _sync_order_dependencies(db, new_data)
     record.data = new_data
     record.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -1203,82 +1297,6 @@ async def record_update_single_field(
     })
 
 
-@router.post("/modules/{slug}/bulk/status")
-async def bulk_update_status(
-    request: Request,
-    slug: str,
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    module = await get_module_by_slug(db, slug)
-    if not module:
-        raise HTTPException(404)
-
-    permissions = get_user_permissions(user)
-    all_field_names = [f["name"] for f in module.fields_schema]
-    editable_fields = get_editable_fields(permissions, slug, all_field_names, user.is_superuser)
-    status_field, status_options, _ = _extract_status_settings(module)
-
-    if not status_field or status_field not in editable_fields:
-        raise HTTPException(403, "Массовое обновление статуса недоступно")
-
-    form_data = await request.form()
-    field = str(form_data.get("field", "")).strip()
-    value = str(form_data.get("value", "")).strip()
-    record_ids_raw = form_data.getlist("record_ids")
-
-    if field != status_field:
-        raise HTTPException(400, "Можно обновлять только поле статуса")
-    if not value:
-        raise HTTPException(400, "Статус не указан")
-
-    allowed_statuses = {_status_key(opt) for opt in status_options}
-    if allowed_statuses and _status_key(value) not in allowed_statuses:
-        raise HTTPException(400, "Недопустимый статус")
-
-    record_ids: list[int] = []
-    for raw in record_ids_raw:
-        text = str(raw or "").strip()
-        if text.isdigit():
-            record_ids.append(int(text))
-
-    if not record_ids:
-        raise HTTPException(400, "Не выбраны записи")
-
-    result = await db.execute(
-        select(DynamicRecord).where(
-            DynamicRecord.module_slug == slug,
-            DynamicRecord.id.in_(record_ids),
-        )
-    )
-    records = result.scalars().all()
-    if not records:
-        raise HTTPException(404, "Записи не найдены")
-
-    now = datetime.now(timezone.utc)
-    for record in records:
-        new_data = dict(record.data or {})
-        new_data[status_field] = value
-        if _status_eq(value, "Выдан"):
-            new_data["__partner_issued__"] = False
-        if slug == "orders":
-            new_data = _apply_order_status_automation(new_data, status_field)
-        if slug == "orders":
-            await _sync_order_dependencies(db, new_data)
-        record.data = new_data
-        record.updated_at = now
-
-    await db.commit()
-
-    try:
-        from app.sync_service import push_module
-        await push_module(db, module)
-    except Exception:
-        pass
-
-    return JSONResponse({"ok": True, "updated": len(records)})
-
-
 @router.post("/modules/{slug}/record/new", response_class=HTMLResponse)
 async def record_create(
     request: Request,
@@ -1289,6 +1307,8 @@ async def record_create(
     module = await get_module_by_slug(db, slug)
     if not module:
         raise HTTPException(404)
+    if _is_order_derived_module_readonly(slug):
+        raise HTTPException(403, "Модуль доступен только для просмотра")
 
     permissions = get_user_permissions(user)
     all_field_names = [f["name"] for f in module.fields_schema]
@@ -1307,17 +1327,6 @@ async def record_create(
     data = {}
     for field in all_field_names:
         data[field] = form_data.get(field, "")
-
-    if slug == "orders":
-        data["__point_id__"] = str(form_data.get("__point_id__", "")).strip()
-        data["__master_id__"] = str(form_data.get("__master_id__", "")).strip()
-        if "__repair_status__" in form_data:
-            data["__repair_status__"] = _normalize_repair_status(str(form_data.get("__repair_status__", "")))
-        if "__logistics_status__" in form_data:
-            data["__logistics_status__"] = str(form_data.get("__logistics_status__", "")).strip().lower()
-        data = await _validate_and_apply_order_assignment(db, data, all_field_names, require_point=False)
-        status_field, _, _ = _extract_status_settings(module)
-        data = _apply_order_status_automation(data, status_field)
 
     record = DynamicRecord(
         module_slug=slug,
@@ -1355,44 +1364,19 @@ async def record_new_form(
     module = await get_module_by_slug(db, slug)
     if not module:
         raise HTTPException(404)
+    if _is_order_derived_module_readonly(slug):
+        raise HTTPException(403, "Модуль доступен только для просмотра")
 
     permissions = get_user_permissions(user)
     all_field_names = [f["name"] for f in module.fields_schema]
     status_field, status_options, _ = _extract_status_settings(module)
     visible_fields = get_visible_fields(permissions, slug, all_field_names, user.is_superuser)
     editable_fields = get_editable_fields(permissions, slug, all_field_names, user.is_superuser)
+    visible_fields = _filter_module_visible_fields(slug, visible_fields)
+    editable_fields = [field_name for field_name in editable_fields if field_name in visible_fields]
+    field_input_types = _resolve_field_input_types(module, visible_fields)
     modules = await get_all_modules(db)
     modules = filter_visible_modules_for_user(modules, user)
-
-    initial_values: dict[str, str] = {}
-    point_options: list[dict] = []
-    master_options: list[dict] = []
-    if slug == "orders":
-        today = date.today().isoformat()
-        for field in (module.fields_schema or []):
-            if not isinstance(field, dict):
-                continue
-            field_name = str(field.get("name", "")).strip()
-            lowered = field_name.lower()
-            if lowered in {"дата приёма", "дата приема", "принят", "accept_date", "accepted_at"}:
-                initial_values[field_name] = today
-                break
-
-        locations = (
-            await db.execute(select(Location).where(Location.is_active == True).order_by(Location.name.asc()))
-        ).scalars().all()
-        executors = (
-            await db.execute(select(Executor).where(Executor.is_active == True).order_by(Executor.name.asc()))
-        ).scalars().all()
-        point_options = [{"id": int(loc.id), "name": str(loc.name)} for loc in locations]
-        master_options = [
-            {
-                "id": int(ex.id),
-                "name": str(ex.name or ""),
-                "location_id": int(ex.location_id) if ex.location_id else None,
-            }
-            for ex in executors
-        ]
 
     return templates.TemplateResponse("record_new_modal.html", {
         "request": request,
@@ -1403,9 +1387,7 @@ async def record_new_form(
         "editable_fields": editable_fields,
         "status_field": status_field,
         "status_options": status_options,
-        "initial_values": initial_values,
-        "point_options": point_options,
-        "master_options": master_options,
+        "field_input_types": field_input_types,
     })
 
 
@@ -1418,6 +1400,8 @@ async def record_delete(
 ):
     if not user.is_superuser:
         raise HTTPException(403)
+    if _is_order_derived_module_readonly(slug):
+        raise HTTPException(403, "Модуль доступен только для просмотра")
 
     await db.execute(
         sa_delete(DynamicRecord).where(

@@ -1003,6 +1003,28 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }, true);
 
+    document.body.addEventListener('click', function (event) {
+        if (
+            event.target.closest('.js-status-select') ||
+            event.target.closest('.js-partner-issued-checkbox') ||
+            event.target.closest('.js-order-edit-btn')
+        ) {
+            return;
+        }
+
+        const row = event.target.closest('.js-order-row-toggle');
+        if (!row) return;
+
+        const detailsId = row.dataset.detailsId;
+        if (!detailsId) return;
+
+        const detailsRow = document.getElementById(detailsId);
+        if (!detailsRow) return;
+
+        detailsRow.classList.toggle('d-none');
+        row.classList.toggle('is-expanded', !detailsRow.classList.contains('d-none'));
+    });
+
     document.body.addEventListener('change', function (event) {
         const selectEl = event.target.closest('.js-status-select');
         if (selectEl) {

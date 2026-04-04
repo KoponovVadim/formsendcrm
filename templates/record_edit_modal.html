@@ -25,8 +25,9 @@
                     {% endif %}
                 </select>
                 {% else %}
-                <input type="text" class="form-control" name="{{ field }}"
-                       value="{{ record.data.get(field, '') }}">
+                  {% set input_type = field_input_types.get(field, 'text') %}
+                  <input type="{{ input_type }}" class="form-control" name="{{ field }}"
+                      value="{% if input_type == 'date' %}{{ to_date_input_value(record.data.get(field, '')) }}{% else %}{{ record.data.get(field, '') }}{% endif %}">
                 {% endif %}
                 {% else %}
                 <input type="text" class="form-control-plaintext bg-light px-2 rounded"

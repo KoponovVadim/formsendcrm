@@ -6,13 +6,13 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
-from app.auth import get_current_user, get_current_user_optional, hash_password
+from app.auth import get_current_user, get_current_user_optional
 from app.database import get_db
 from app.models import DynamicRecord, ModuleConfig, Role, User
 from app.routes_admin import router as admin_router
 from app.routes_auth import router as auth_router
 from app.routes_modules import router as modules_router
-from models.crm import Client, Executor, Location, LogisticsDelivery, Order, Task
+from models.crm import Client, Executor, Location, Order, Task
 
 
 @pytest.mark.asyncio
@@ -76,104 +76,11 @@ async def test_admin_creates_user_with_role_and_point(db_session: Any):
     assert response.status_code == 302
     assert response.headers.get("location") == "/admin/users?created=1"
 
-    created = (await db_session.execute(select(User).where(User.username == "manager@test.ru"))).scalar_one_or_none()
+    created = (await db_session.execute(select(User).where(User.email == "manager@test.ru"))).scalar_one_or_none()
     assert created is not None
     assert created.role_id == role.id
-    assert created.point_id == location.id
-    assert created.specialization == ""
+    assert created.specialization == location.name
     assert created.is_active is True
-
-
-@pytest.mark.asyncio
-async def test_login_works_with_username(db_session: Any):
-    app = FastAPI()
-    app.include_router(auth_router)
-
-    async def _override_get_db() -> AsyncGenerator[Any, None]:
-        yield db_session
-
-    async def _override_get_current_user_optional():
-        return None
-
-    app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user_optional] = _override_get_current_user_optional
-
-    db_session.add(
-        User(
-            username="manager_login",
-            email="manager@test.local",
-            password_hash=hash_password("strongpass"),
-            is_active=True,
-            is_superuser=False,
-        )
-    )
-    await db_session.commit()
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client:
-        response = await client.post(
-            "/login",
-            data={"login": "manager_login", "password": "strongpass"},
-        )
-
-    assert response.status_code == 302
-    assert response.headers.get("location") == "/"
-
-
-@pytest.mark.asyncio
-async def test_admin_can_create_reception_role_preset(db_session: Any):
-    app = FastAPI()
-    app.include_router(admin_router)
-
-    async def _override_get_db() -> AsyncGenerator[Any, None]:
-        yield db_session
-
-    async def _override_get_current_user():
-        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
-
-    app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user] = _override_get_current_user
-
-    db_session.add_all(
-        [
-            ModuleConfig(
-                slug="orders",
-                sheet_name="Заказы",
-                display_name="Заказы",
-                icon="bi-clipboard-check",
-                enabled=True,
-                fields_schema=[
-                    {"name": "№ заказа", "type": "TEXT"},
-                    {"name": "Клиент", "type": "TEXT"},
-                    {"name": "Статус", "type": "TEXT"},
-                ],
-                sort_order=0,
-            ),
-            ModuleConfig(
-                slug="clients",
-                sheet_name="Клиенты",
-                display_name="Клиенты",
-                icon="bi-people",
-                enabled=True,
-                fields_schema=[
-                    {"name": "ФИО название", "type": "TEXT"},
-                    {"name": "Телефон", "type": "TEXT"},
-                ],
-                sort_order=1,
-            ),
-        ]
-    )
-    await db_session.commit()
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client:
-        response = await client.post("/admin/roles/create-reception")
-
-    assert response.status_code == 302
-
-    role = (await db_session.execute(select(Role).where(Role.name == "Пункт приема заказов"))).scalar_one_or_none()
-    assert role is not None
-    assert role.permissions.get("logistics", {}).get("manage") is True
-    assert role.permissions.get("v2", {}).get("services", {}).get("manage") is False
-    assert role.permissions.get("orders", {}).get("visible") is True
 
 
 @pytest.mark.asyncio
@@ -211,6 +118,174 @@ async def test_module_page_has_pull_and_push_sync_buttons_for_superuser(db_sessi
     html = response.text
     assert '/admin/sync/pull/orders' in html
     assert '/admin/sync/push/orders' in html
+
+
+@pytest.mark.asyncio
+async def test_analytics_module_hides_sync_and_add_controls(db_session: Any):
+    app = FastAPI()
+    app.include_router(modules_router)
+    app.include_router(admin_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    db_session.add(
+        ModuleConfig(
+            slug="analytics",
+            sheet_name="Аналитика",
+            display_name="Аналитика",
+            icon="bi-graph-up",
+            enabled=True,
+            fields_schema=[{"name": "Месяц", "type": "TEXT"}, {"name": "Выручка", "type": "TEXT"}],
+            sort_order=0,
+        )
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get("/modules/analytics")
+
+    assert response.status_code == 200
+    html = response.text
+    assert '/admin/sync/pull/analytics' not in html
+    assert '/admin/sync/push/analytics' not in html
+    assert '/modules/analytics/new' not in html
+
+
+@pytest.mark.asyncio
+async def test_orders_module_filters_records_by_period(db_session: Any):
+    app = FastAPI()
+    app.include_router(modules_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    db_session.add(
+        ModuleConfig(
+            slug="orders",
+            sheet_name="Заказы",
+            display_name="Заказы",
+            icon="bi-clipboard-check",
+            enabled=True,
+            fields_schema=[
+                {"name": "№ заказа", "type": "TEXT"},
+                {"name": "Дата приёма", "type": "DATE"},
+                {"name": "Клиент", "type": "TEXT"},
+            ],
+            sort_order=0,
+        )
+    )
+    db_session.add_all(
+        [
+            DynamicRecord(module_slug="orders", row_index=2, data={"№ заказа": "ORD-APR-01", "Дата приёма": "2026-04-01", "Клиент": "A"}),
+            DynamicRecord(module_slug="orders", row_index=3, data={"№ заказа": "ORD-APR-15", "Дата приёма": "2026-04-15", "Клиент": "B"}),
+            DynamicRecord(module_slug="orders", row_index=4, data={"№ заказа": "ORD-MAY-01", "Дата приёма": "2026-05-01", "Клиент": "C"}),
+        ]
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get("/modules/orders?date_from=2026-04-10&date_to=2026-04-30")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "ORD-APR-15" in html
+    assert "ORD-APR-01" not in html
+    assert "ORD-MAY-01" not in html
+
+
+@pytest.mark.asyncio
+async def test_finance_module_is_derived_from_orders_and_readonly(db_session: Any):
+    app = FastAPI()
+    app.include_router(modules_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    db_session.add_all(
+        [
+            ModuleConfig(
+                slug="orders",
+                sheet_name="Заказы",
+                display_name="Заказы",
+                icon="bi-clipboard-check",
+                enabled=True,
+                fields_schema=[
+                    {"name": "№ заказа", "type": "TEXT"},
+                    {"name": "Дата приёма", "type": "DATE"},
+                    {"name": "Дата выдачи", "type": "DATE"},
+                    {"name": "Клиент", "type": "TEXT"},
+                ],
+                sort_order=0,
+            ),
+            ModuleConfig(
+                slug="finance",
+                sheet_name="Финансы",
+                display_name="Финансы",
+                icon="bi-cash-stack",
+                enabled=True,
+                fields_schema=[
+                    {"name": "№ заказа", "type": "TEXT"},
+                    {"name": "Цена для клиента", "type": "TEXT"},
+                    {"name": "Стоимость работы", "type": "TEXT"},
+                ],
+                sort_order=1,
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    client = Client(name="Finance Client", phone="79990001122", email="")
+    db_session.add(client)
+    await db_session.flush()
+
+    db_session.add(
+        Order(
+            order_no="ORD-DERIVED-1",
+            client_id=client.id,
+            status="Новый",
+            total_amount=1500,
+            currency="RUB",
+            source_channel="tests",
+        )
+    )
+    db_session.add(
+        DynamicRecord(
+            module_slug="orders",
+            row_index=2,
+            data={"№ заказа": "ORD-DERIVED-1", "Дата приёма": "2026-04-04", "Дата выдачи": "2026-04-05", "Клиент": "Finance Client"},
+        )
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client_http:
+        response = await client_http.get("/modules/finance")
+        readonly_response = await client_http.get("/modules/finance/new")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "ORD-DERIVED-1" in html
+    assert "1500" in html
+    assert '/modules/finance/new' not in html
+    assert readonly_response.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -311,163 +386,6 @@ async def test_admin_can_update_and_delete_location_and_executor(db_session: Any
 
     updated_location = (await db_session.execute(select(Location).where(Location.name == "Renamed Point"))).scalar_one_or_none()
     assert updated_location is None
-
-
-@pytest.mark.asyncio
-async def test_admin_orders_page_and_delete_order(db_session: Any):
-    app = FastAPI()
-    app.include_router(admin_router)
-
-    async def _override_get_db() -> AsyncGenerator[Any, None]:
-        yield db_session
-
-    async def _override_get_current_user():
-        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
-
-    app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user] = _override_get_current_user
-
-    db_session.add(
-        ModuleConfig(
-            slug="orders",
-            sheet_name="Заказы",
-            display_name="Заказы",
-            icon="bi-clipboard-check",
-            enabled=True,
-            fields_schema=[
-                {"name": "№ заказа", "type": "TEXT"},
-                {"name": "Статус", "type": "TEXT"},
-            ],
-            sort_order=0,
-        )
-    )
-
-    client = Client(name="Order Admin Client", phone="79998887766")
-    point = Location(name="Order Admin Point", is_active=True)
-    db_session.add_all([client, point])
-    await db_session.flush()
-
-    order = Order(
-        order_no="JX-ADMIN-ORDER-1",
-        client_id=client.id,
-        location_id=point.id,
-        status="Новый",
-        total_amount=500,
-        currency="RUB",
-    )
-    db_session.add(order)
-    db_session.add(
-        DynamicRecord(
-            module_slug="orders",
-            row_index=10,
-            data={"№ заказа": "JX-ADMIN-ORDER-1", "Статус": "Новый"},
-        )
-    )
-    await db_session.commit()
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client_http:
-        page_response = await client_http.get("/admin/orders")
-        assert page_response.status_code == 200
-        assert "JX-ADMIN-ORDER-1" in page_response.text
-
-        delete_response = await client_http.post(f"/admin/orders/{order.id}/delete")
-
-    assert delete_response.status_code == 302
-    assert delete_response.headers.get("location") == "/admin/orders"
-
-    deleted = (await db_session.execute(select(Order).where(Order.id == order.id))).scalar_one_or_none()
-    assert deleted is None
-
-    dashboard_copy = (
-        await db_session.execute(
-            select(DynamicRecord).where(DynamicRecord.module_slug == "orders")
-        )
-    ).scalars().all()
-    assert dashboard_copy == []
-
-
-@pytest.mark.asyncio
-async def test_admin_user_delete_guards_and_cleanup_relations(db_session: Any):
-    app = FastAPI()
-    app.include_router(admin_router)
-
-    current_user_state = {"id": 0}
-
-    async def _override_get_db() -> AsyncGenerator[Any, None]:
-        yield db_session
-
-    async def _override_get_current_user():
-        return SimpleNamespace(id=current_user_state["id"], is_superuser=True, specialization="", email="admin@test.local", role=None)
-
-    app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user] = _override_get_current_user
-
-    self_user = User(email="self-delete@test.local", password_hash="x", is_active=True, is_superuser=True)
-    db_session.add(self_user)
-    await db_session.commit()
-    current_user_state["id"] = int(self_user.id)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client_http:
-        self_delete_response = await client_http.post(f"/admin/users/{self_user.id}/delete")
-    assert self_delete_response.status_code == 302
-    assert self_delete_response.headers.get("location") == "/admin/users?delete_error=self"
-
-    self_after = (await db_session.execute(select(User).where(User.id == self_user.id))).scalar_one_or_none()
-    assert self_after is not None
-
-    lone_superuser = User(email="last-super@test.local", password_hash="x", is_active=True, is_superuser=True)
-    db_session.add(lone_superuser)
-    await db_session.commit()
-
-    await db_session.delete(self_user)
-    await db_session.commit()
-    current_user_state["id"] = 999999
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client_http:
-        last_super_response = await client_http.post(f"/admin/users/{lone_superuser.id}/delete")
-    assert last_super_response.status_code == 302
-    assert last_super_response.headers.get("location") == "/admin/users?delete_error=last_superuser"
-
-    survivor = (await db_session.execute(select(User).where(User.id == lone_superuser.id))).scalar_one_or_none()
-    assert survivor is not None
-
-    manager = User(email="manager-delete@test.local", password_hash="x", is_active=True, is_superuser=False)
-    point = Location(name="Delete User Point", is_active=True)
-    client_entity = Client(name="Delete User Client", phone="70000000000")
-    db_session.add_all([manager, point, client_entity])
-    await db_session.flush()
-
-    order = Order(
-        order_no="JX-ADMIN-USER-DEL-1",
-        client_id=client_entity.id,
-        location_id=point.id,
-        status="Новый",
-        total_amount=100,
-        currency="RUB",
-    )
-    db_session.add(order)
-    await db_session.flush()
-
-    executor = Executor(name="Delete Linked Executor", is_active=True, user_id=manager.id, location_id=point.id, current_active_tasks=0, max_active_tasks=5)
-    delivery = LogisticsDelivery(order_id=order.id, courier_user_id=manager.id, status="created")
-    db_session.add_all([executor, delivery])
-    await db_session.commit()
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", follow_redirects=False) as client_http:
-        success_response = await client_http.post(f"/admin/users/{manager.id}/delete")
-    assert success_response.status_code == 302
-    assert success_response.headers.get("location") == "/admin/users?deleted=1"
-
-    deleted_manager = (await db_session.execute(select(User).where(User.id == manager.id))).scalar_one_or_none()
-    assert deleted_manager is None
-
-    updated_executor = (await db_session.execute(select(Executor).where(Executor.id == executor.id))).scalar_one_or_none()
-    assert updated_executor is not None
-    assert updated_executor.user_id is None
-
-    updated_delivery = (await db_session.execute(select(LogisticsDelivery).where(LogisticsDelivery.id == delivery.id))).scalar_one_or_none()
-    assert updated_delivery is not None
-    assert updated_delivery.courier_user_id is None
 
 
 @pytest.mark.asyncio

@@ -1,37 +1,19 @@
-{% if module.slug == 'orders' and status_field and status_field in editable_fields %}
-<div class="card border-0 shadow-sm mb-3" id="orders-bulk-status-panel" data-slug="{{ module.slug }}" data-field="{{ status_field }}">
-    <div class="card-body py-2">
-        <div class="d-flex flex-wrap align-items-center gap-2">
-            <span class="small text-muted">Выбрано: <strong class="js-orders-selected-count">0</strong></span>
-            <select class="form-select form-select-sm w-auto js-orders-bulk-status-value">
-                {% for option in status_options %}
-                <option value="{{ option }}">{{ option }}</option>
-                {% endfor %}
-            </select>
-            <button type="button" class="btn btn-sm btn-primary js-orders-bulk-status-apply" disabled>
-                Применить статус к выбранным
-            </button>
-        </div>
-    </div>
-</div>
-{% endif %}
+{% set is_orders = module.slug == 'orders' %}
+{% set table_fields = order_main_fields if is_orders and order_main_fields else visible_fields %}
+{% set table_action_columns = 1 + (1 if show_partner_issued_column else 0) %}
 
-<!-- Desktop table view -->
-<div class="table-responsive d-none d-md-block">
-    <table class="table table-hover align-middle mb-0">
+<div class="table-responsive">
+    <table class="table table-hover align-middle mb-0 records-table">
         <thead class="table-light">
             <tr>
-                {% if module.slug == 'orders' and status_field and status_field in editable_fields %}
-                <th style="width: 40px" onclick="event.stopPropagation()">
-                    <input type="checkbox" class="form-check-input js-order-select-all" title="Выбрать все">
-                </th>
-                {% endif %}
                 <th style="width: 40px">#</th>
-                {% for field in visible_fields %}
+                {% for field in table_fields %}
                 <th class="text-nowrap">{{ field }}</th>
                 {% endfor %}
+                {% if show_partner_issued_column %}
                 <th class="text-nowrap" style="width: 130px">Выдан партн.</th>
-                <th style="width: 60px"></th>
+                {% endif %}
+                <th style="width: 90px"></th>
             </tr>
         </thead>
         <tbody>
@@ -41,26 +23,43 @@
             {% set partner_issued = record.data.get(partner_issued_field, false) %}
             {% set partner_issued_normalized = partner_issued|string|lower %}
             {% set partner_issued_bool = partner_issued is sameas true or partner_issued_normalized in ['true', '1', 'yes', 'on', 'да'] %}
+            {% set row_clickable = is_orders or not is_module_readonly %}
             {% if row_bg %}
-            <tr class="record-row {% if row_bg %}status-row--custom{% else %}status-row--default{% endif %}"
-                style="cursor:pointer; --status-row-color: {{ row_bg }};"
-                hx-get="/modules/{{ module.slug }}/record/{{ record.id }}{% if module.slug == 'orders' %}?panel=drawer{% endif %}"
-                hx-target="{% if module.slug == 'orders' %}#drawer-container{% else %}#modal-container{% endif %}"
-                hx-swap="innerHTML">
+            <tr class="record-row {% if row_bg %}status-row--custom{% else %}status-row--default{% endif %} {% if is_orders %}js-order-row-toggle{% endif %}"
+                style="cursor:{% if row_clickable %}pointer{% else %}default{% endif %}; --status-row-color: {{ row_bg }};"
+                {% if is_orders %}
+                data-details-id="order-details-{{ record.id }}"
+                {% elif not is_module_readonly %}
+                hx-get="/modules/{{ module.slug }}/record/{{ record.id }}"
+                hx-target="#modal-container"
+                hx-swap="innerHTML"
+                {% else %}
+                data-readonly="true"
+                {% endif %}>
             {% else %}
-            <tr class="record-row status-row--default"
-                style="cursor:pointer"
-                hx-get="/modules/{{ module.slug }}/record/{{ record.id }}{% if module.slug == 'orders' %}?panel=drawer{% endif %}"
-                hx-target="{% if module.slug == 'orders' %}#drawer-container{% else %}#modal-container{% endif %}"
-                hx-swap="innerHTML">
+            <tr class="record-row status-row--default {% if is_orders %}js-order-row-toggle{% endif %}"
+                style="cursor:{% if row_clickable %}pointer{% else %}default{% endif %}"
+                {% if is_orders %}
+                data-details-id="order-details-{{ record.id }}"
+                {% elif not is_module_readonly %}
+                hx-get="/modules/{{ module.slug }}/record/{{ record.id }}"
+                hx-target="#modal-container"
+                hx-swap="innerHTML"
+                {% else %}
+                data-readonly="true"
+                {% endif %}>
             {% endif %}
-                {% if module.slug == 'orders' and status_field and status_field in editable_fields %}
-                <td onclick="event.stopPropagation()">
-                    <input type="checkbox" class="form-check-input js-order-bulk-check" data-record-id="{{ record.id }}">
+                <td class="text-muted small">
+                    {% if is_orders %}
+                    <span class="d-inline-flex align-items-center gap-1">
+                        <i class="bi bi-chevron-down order-expand-indicator"></i>
+                        <span>{{ record.row_index }}</span>
+                    </span>
+                    {% else %}
+                    {{ record.row_index }}
+                    {% endif %}
                 </td>
-                {% endif %}
-                <td class="text-muted small">{{ record.row_index }}</td>
-                {% for field in visible_fields %}
+                {% for field in table_fields %}
                 {% if status_field and field == status_field %}
                 <td>
                     {% if field in editable_fields %}
@@ -87,9 +86,10 @@
                     {% endif %}
                 </td>
                 {% else %}
-                <td>{{ record.data.get(field, '') | truncate(50) }}</td>
+                <td class="record-cell">{{ record.data.get(field, '') | truncate(80) }}</td>
                 {% endif %}
                 {% endfor %}
+                {% if show_partner_issued_column %}
                 <td onclick="event.stopPropagation()">
                     {% set row_status_normalized = row_status|string|lower %}
                     {% if status_field and row_status_normalized in ['готов', 'выдан'] and status_field in editable_fields %}
@@ -107,13 +107,52 @@
                     <span class="text-muted small">-</span>
                     {% endif %}
                 </td>
-                <td>
-                    <i class="bi bi-pencil-square text-primary"></i>
+                {% endif %}
+                <td onclick="event.stopPropagation()">
+                    {% if not is_module_readonly %}
+                    <button type="button"
+                            class="btn btn-sm btn-outline-primary js-order-edit-btn"
+                            hx-get="/modules/{{ module.slug }}/record/{{ record.id }}"
+                            hx-target="#modal-container"
+                            hx-swap="innerHTML">
+                        <i class="bi bi-pencil-square"></i>
+                    </button>
+                    {% else %}
+                    <span class="text-muted small">-</span>
+                    {% endif %}
                 </td>
             </tr>
+            {% if is_orders %}
+            <tr id="order-details-{{ record.id }}" class="order-details-row d-none">
+                <td colspan="{{ table_fields|length + table_action_columns + 1 }}">
+                    <div class="order-details-wrap">
+                        {% if order_detail_fields %}
+                        <div class="row g-2">
+                            {% set details = namespace(has_values=false) %}
+                            {% for field in order_detail_fields %}
+                            {% set detail_value = record.data.get(field, '') %}
+                            {% if detail_value is not none and detail_value != '' %}
+                            {% set details.has_values = true %}
+                            <div class="col-12 col-lg-6">
+                                <div class="small text-muted mb-1">{{ field }}</div>
+                                <div class="fw-medium">{{ detail_value }}</div>
+                            </div>
+                            {% endif %}
+                            {% endfor %}
+                            {% if not details.has_values %}
+                            <div class="col-12 small text-muted">Дополнительная информация по заказу отсутствует.</div>
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <div class="small text-muted">Дополнительная информация по заказу отсутствует.</div>
+                        {% endif %}
+                    </div>
+                </td>
+            </tr>
+            {% endif %}
             {% else %}
             <tr>
-                <td colspan="{{ visible_fields|length + 3 + (1 if module.slug == 'orders' and status_field and status_field in editable_fields else 0) }}" class="text-center text-muted py-4">
+                <td colspan="{{ table_fields|length + table_action_columns + 1 }}" class="text-center text-muted py-4">
                     <i class="bi bi-inbox fs-1 d-block mb-2"></i>
                     Нет записей
                 </td>
@@ -123,71 +162,22 @@
     </table>
 </div>
 
-<!-- Mobile card view -->
-<div class="d-md-none">
-    {% for record in records %}
-    <div class="card mb-2 shadow-sm record-card"
-            hx-get="/modules/{{ module.slug }}/record/{{ record.id }}{% if module.slug == 'orders' %}?panel=drawer{% endif %}"
-            hx-target="{% if module.slug == 'orders' %}#drawer-container{% else %}#modal-container{% endif %}"
-            hx-swap="innerHTML">
-        <div class="card-body p-3">
-            <div class="d-flex justify-content-between align-items-start mb-2">
-                <span class="badge bg-light text-dark">#{{ record.row_index }}</span>
-                <i class="bi bi-pencil-square text-primary"></i>
-            </div>
-            {% for field in visible_fields %}
-            {% set val = record.data.get(field, '') %}
-            {% if val %}
-            <div class="mb-1">
-                <small class="text-muted d-block">{{ field }}</small>
-                <span class="fw-medium">{{ val | truncate(80) }}</span>
-            </div>
-            {% endif %}
-            {% endfor %}
-            {% set mobile_status = record.data.get(status_field, '') if status_field else '' %}
-            {% set mobile_partner_raw = record.data.get(partner_issued_field, false) %}
-            {% set mobile_partner_norm = mobile_partner_raw|string|lower %}
-            {% set mobile_partner_bool = mobile_partner_raw is sameas true or mobile_partner_norm in ['true', '1', 'yes', 'on', 'да'] %}
-            {% set mobile_status_norm = mobile_status|string|lower %}
-            {% if status_field and mobile_status_norm in ['готов', 'выдан'] and status_field in editable_fields %}
-            <div class="mt-2" onclick="event.stopPropagation()">
-                <label class="form-check form-switch m-0 d-inline-flex align-items-center gap-2">
-                    <input class="form-check-input js-partner-issued-checkbox"
-                           type="checkbox"
-                           data-slug="{{ module.slug }}"
-                           data-record-id="{{ record.id }}"
-                           data-field="{{ partner_issued_field }}"
-                           {% if mobile_partner_bool %}checked{% endif %}>
-                    <span class="small text-muted">Выдан партнером</span>
-                </label>
-            </div>
-            {% endif %}
-        </div>
-    </div>
-    {% else %}
-    <div class="text-center text-muted py-5">
-        <i class="bi bi-inbox fs-1 d-block mb-2"></i>
-        Нет записей
-    </div>
-    {% endfor %}
-</div>
-
 <!-- Pagination -->
 {% if total_pages > 1 %}
 <nav class="mt-3">
     <ul class="pagination pagination-sm justify-content-center">
         <li class="page-item {% if page <= 1 %}disabled{% endif %}">
-            <a class="page-link" href="/modules/{{ module.slug }}?page={{ page - 1 }}&search={{ search }}&sort={{ sort }}&view={{ view_mode|default('table') }}">←</a>
+            <a class="page-link" href="/modules/{{ module.slug }}?page={{ page - 1 }}&search={{ search }}&sort={{ sort }}&date_from={{ date_from }}&date_to={{ date_to }}">←</a>
         </li>
         {% for p in range(1, total_pages + 1) %}
         {% if p >= page - 2 and p <= page + 2 %}
         <li class="page-item {% if p == page %}active{% endif %}">
-            <a class="page-link" href="/modules/{{ module.slug }}?page={{ p }}&search={{ search }}&sort={{ sort }}&view={{ view_mode|default('table') }}">{{ p }}</a>
+            <a class="page-link" href="/modules/{{ module.slug }}?page={{ p }}&search={{ search }}&sort={{ sort }}&date_from={{ date_from }}&date_to={{ date_to }}">{{ p }}</a>
         </li>
         {% endif %}
         {% endfor %}
         <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
-            <a class="page-link" href="/modules/{{ module.slug }}?page={{ page + 1 }}&search={{ search }}&sort={{ sort }}&view={{ view_mode|default('table') }}">→</a>
+            <a class="page-link" href="/modules/{{ module.slug }}?page={{ page + 1 }}&search={{ search }}&sort={{ sort }}&date_from={{ date_from }}&date_to={{ date_to }}">→</a>
         </li>
     </ul>
 </nav>
