@@ -152,39 +152,43 @@ def _build_header_mapping(rows: list[dict], expected_headers: list[str]) -> dict
 
 async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
     """Pull data from Google Sheets into local database."""
+    module_slug = str(getattr(module, "slug", "") or "")
+    sheet_name = str(getattr(module, "sheet_name", "") or "")
+    fields_schema = list(getattr(module, "fields_schema", []) or [])
+
     result = {"status": "success", "records_affected": 0, "message": ""}
-    if _is_sync_disabled(module.slug):
+    if _is_sync_disabled(module_slug):
         result["message"] = "Sync disabled for this module"
-        await _log_sync(db, module.slug, "pull", "success", 0, result["message"])
+        await _log_sync(db, module_slug, "pull", "success", 0, result["message"])
         return result
     if not settings.GOOGLE_SHEETS_IMPORT_ENABLED:
         result["status"] = "error"
         result["message"] = "Google Sheets pull is disabled. PostgreSQL is the primary storage."
-        await _log_sync(db, module.slug, "pull", "error", 0, result["message"])
+        await _log_sync(db, module_slug, "pull", "error", 0, result["message"])
         return result
 
     try:
-        logger.info(f"Starting pull for module '{module.slug}' from sheet '{module.sheet_name}'")
-        source_rows = sheets_adapter.get_worksheet_data(module.sheet_name)
+        logger.info(f"Starting pull for module '{module_slug}' from sheet '{sheet_name}'")
+        source_rows = sheets_adapter.get_worksheet_data(sheet_name)
         if not source_rows:
-            logger.info(f"No rows in worksheet '{module.sheet_name}' for module '{module.slug}'; local records will be cleared")
+            logger.info(f"No rows in worksheet '{sheet_name}' for module '{module_slug}'; local records will be cleared")
 
         rows = [row for row in source_rows if isinstance(row, dict)]
         if source_rows and not rows:
-            logger.warning(f"Worksheet '{module.sheet_name}' returned non-dict rows only; treating as empty dataset")
+            logger.warning(f"Worksheet '{sheet_name}' returned non-dict rows only; treating as empty dataset")
 
         headers = [
             str(field.get("name", "")).strip()
-            for field in (module.fields_schema or [])
+            for field in fields_schema
             if isinstance(field, dict) and str(field.get("name", "")).strip()
         ]
         field_schema_by_name = {
             str(field.get("name", "")).strip(): field
-            for field in (module.fields_schema or [])
+            for field in fields_schema
             if isinstance(field, dict) and str(field.get("name", "")).strip()
         }
         header_mapping = _build_header_mapping(rows, headers)
-        logger.debug(f"Headers for {module.slug}: {headers}")
+        logger.debug(f"Headers for {module_slug}: {headers}")
         logger.debug(f"Header mapping: {header_mapping}")
 
         prepared_rows: list[dict[str, str]] = []
@@ -213,13 +217,13 @@ async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
 
         # Delete existing records for this module
         await db.execute(
-            delete(DynamicRecord).where(DynamicRecord.module_slug == module.slug)
+            delete(DynamicRecord).where(DynamicRecord.module_slug == module_slug)
         )
 
         # Insert new records
         for idx, data in enumerate(prepared_rows, start=2):
             record = DynamicRecord(
-                module_slug=module.slug,
+                module_slug=module_slug,
                 row_index=idx,
                 data=data,
                 updated_at=datetime.now(timezone.utc),
@@ -235,60 +239,65 @@ async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
         if invalid_date_cells:
             message_parts.append(f"normalized with {invalid_date_cells} invalid date values")
         result["message"] = "; ".join(message_parts)
-        logger.info(f"Pull completed for {module.slug}: {result['message']}")
+        logger.info(f"Pull completed for {module_slug}: {result['message']}")
 
-        await _log_sync(db, module.slug, "pull", "success", len(prepared_rows), result["message"])
+        await _log_sync(db, module_slug, "pull", "success", len(prepared_rows), result["message"])
 
     except Exception as e:
-        logger.exception(f"Pull failed for {module.slug}: {type(e).__name__}: {str(e)}")
+        logger.exception(f"Pull failed for {module_slug}: {type(e).__name__}: {str(e)}")
         await db.rollback()
         result["status"] = "error"
         result["message"] = f"Pull failed: {str(e)}"
-        await _log_sync(db, module.slug, "pull", "error", 0, str(e))
+        await _log_sync(db, module_slug, "pull", "error", 0, str(e))
 
     return result
 
 
 async def push_module(db: AsyncSession, module: ModuleConfig) -> dict:
     """Push local database records to Google Sheets."""
+    module_slug = str(getattr(module, "slug", "") or "")
+    sheet_name = str(getattr(module, "sheet_name", "") or "")
+
     result = {"status": "success", "records_affected": 0, "message": ""}
-    if _is_sync_disabled(module.slug):
+    if _is_sync_disabled(module_slug):
         result["message"] = "Sync disabled for this module"
-        await _log_sync(db, module.slug, "push", "success", 0, result["message"])
+        await _log_sync(db, module_slug, "push", "success", 0, result["message"])
         return result
 
     try:
         stmt = select(DynamicRecord).where(
-            DynamicRecord.module_slug == module.slug
+            DynamicRecord.module_slug == module_slug
         ).order_by(DynamicRecord.row_index)
         records = (await db.execute(stmt)).scalars().all()
 
         if not records:
             result["message"] = "No local records to push"
-            await _log_sync(db, module.slug, "push", "success", 0, result["message"])
+            await _log_sync(db, module_slug, "push", "success", 0, result["message"])
             return result
 
         rows_data = [rec.data for rec in records]
-        sheets_adapter.update_worksheet_data(module.sheet_name, rows_data)
+        sheets_adapter.update_worksheet_data(sheet_name, rows_data)
 
         result["records_affected"] = len(rows_data)
         result["message"] = f"Pushed {len(rows_data)} records"
-        await _log_sync(db, module.slug, "push", "success", len(rows_data), result["message"])
+        await _log_sync(db, module_slug, "push", "success", len(rows_data), result["message"])
 
     except Exception as e:
-        logger.exception(f"Push failed for {module.slug}")
+        logger.exception(f"Push failed for {module_slug}")
         result["status"] = "error"
         result["message"] = f"Push failed: {str(e)}"
-        await _log_sync(db, module.slug, "push", "error", 0, str(e))
+        await _log_sync(db, module_slug, "push", "error", 0, str(e))
 
     return result
 
 
 async def push_single_record(db: AsyncSession, module: ModuleConfig, record: DynamicRecord):
     """Push a single updated record back to Google Sheets."""
+    sheet_name = str(getattr(module, "sheet_name", "") or "")
+
     try:
         sheets_adapter.update_single_row(
-            module.sheet_name, record.row_index, record.data
+            sheet_name, record.row_index, record.data
         )
     except Exception as e:
         logger.warning(f"Failed to push single record to Sheets: {e}")
@@ -300,10 +309,11 @@ async def pull_all(db: AsyncSession):
     modules = (await db.execute(stmt)).scalars().all()
     results = {}
     for mod in modules:
-        if _is_sync_disabled(mod.slug):
-            results[mod.slug] = {"status": "success", "records_affected": 0, "message": "Sync disabled for this module"}
+        module_slug = str(getattr(mod, "slug", "") or "")
+        if _is_sync_disabled(module_slug):
+            results[module_slug] = {"status": "success", "records_affected": 0, "message": "Sync disabled for this module"}
             continue
-        results[mod.slug] = await pull_module(db, mod)
+        results[module_slug] = await pull_module(db, mod)
     return results
 
 
@@ -313,10 +323,11 @@ async def push_all(db: AsyncSession):
     modules = (await db.execute(stmt)).scalars().all()
     results = {}
     for mod in modules:
-        if _is_sync_disabled(mod.slug):
-            results[mod.slug] = {"status": "success", "records_affected": 0, "message": "Sync disabled for this module"}
+        module_slug = str(getattr(mod, "slug", "") or "")
+        if _is_sync_disabled(module_slug):
+            results[module_slug] = {"status": "success", "records_affected": 0, "message": "Sync disabled for this module"}
             continue
-        results[mod.slug] = await push_module(db, mod)
+        results[module_slug] = await push_module(db, mod)
     return results
 
 
