@@ -10,6 +10,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <link href="/static/css/style.css" rel="stylesheet">
+    <link href="/static/css/ps1-theme.css" rel="stylesheet">
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 </head>
 <body class="crm-premium-theme">
@@ -157,8 +158,29 @@
         {% block public_content %}{% endblock %}
     {% endif %}
 
+    <!-- PS1/2 Theme Toggle -->
+    <div class="ps1-theme-toggle" id="ps1-toggle" title="PS1/2 Theme Toggle" onclick="togglePS1Theme()">🎮</div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/js/app.js"></script>
+    <script>
+        function togglePS1Theme() {
+            const html = document.documentElement;
+            const isPS1 = html.classList.toggle('ps1-theme');
+            localStorage.setItem('ps1-theme-enabled', isPS1);
+            document.body.classList.toggle('ps1-theme');
+        }
+        
+        function initializePS1Theme() {
+            const isEnabled = localStorage.getItem('ps1-theme-enabled') === 'true';
+            if (isEnabled) {
+                document.documentElement.classList.add('ps1-theme');
+                document.body.classList.add('ps1-theme');
+            }
+        }
+        
+        initializePS1Theme();
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

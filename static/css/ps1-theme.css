@@ -1,0 +1,330 @@
+/* PlayStation 1/2 Retro Theme */
+:root.ps1-theme {
+  --ps1-primary: #00ffff;
+  --ps1-secondary: #ff00ff;
+  --ps1-success: #00ff00;
+  --ps1-danger: #ff0000;
+  --ps1-warning: #ffff00;
+  --ps1-dark: #1a1a2e;
+  --ps1-border: #00ffff;
+}
+
+body.ps1-theme {
+  background: linear-gradient(135deg, #0a0e27 0%, #16213e 100%);
+  color: #00ffff;
+  font-family: 'Courier New', monospace;
+  text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+}
+
+.ps1-theme .navbar {
+  background: linear-gradient(90deg, #1a0033 0%, #330066 100%) !important;
+  border-bottom: 4px solid var(--ps1-secondary);
+  box-shadow: 0 0 20px rgba(255, 0, 255, 0.6), inset 0 2px 4px rgba(0, 255, 255, 0.3);
+}
+
+.ps1-theme .navbar-brand {
+  color: var(--ps1-primary) !important;
+  font-weight: bold;
+  font-size: 1.5rem;
+  text-shadow: 0 0 15px var(--ps1-secondary);
+  letter-spacing: 2px;
+  animation: ps1-glow 2s ease-in-out infinite;
+}
+
+.ps1-theme .nav-link {
+  color: var(--ps1-primary) !important;
+  border-left: 3px solid transparent;
+  transition: all 0.2s;
+  text-shadow: 0 0 8px rgba(0, 255, 255, 0.4);
+}
+
+.ps1-theme .nav-link:hover {
+  color: var(--ps1-warning) !important;
+  border-left: 3px solid var(--ps1-secondary);
+  background: rgba(255, 0, 255, 0.1);
+  text-shadow: 0 0 15px var(--ps1-warning);
+  transform: skewX(-5deg);
+}
+
+.ps1-theme .nav-link.active {
+  color: var(--ps1-warning) !important;
+  border-left: 3px solid var(--ps1-success);
+  background: rgba(0, 255, 0, 0.1);
+}
+
+.ps1-theme .card {
+  background: linear-gradient(135deg, #1a1a3e 0%, #2d1b4e 100%);
+  border: 3px solid var(--ps1-primary);
+  box-shadow: 
+    0 0 20px rgba(0, 255, 255, 0.4),
+    inset 0 1px 0 rgba(255, 0, 255, 0.2),
+    -8px 8px 0px rgba(0, 0, 0, 0.5);
+  transform: perspective(1000px) rotateX(0.5deg) rotateY(-0.5deg);
+  position: relative;
+}
+
+.ps1-theme .card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--ps1-secondary), transparent);
+  opacity: 0.5;
+}
+
+.ps1-theme .card-header {
+  background: linear-gradient(90deg, rgba(0, 255, 255, 0.1) 0%, rgba(255, 0, 255, 0.1) 100%);
+  border-bottom: 2px solid var(--ps1-secondary);
+  color: var(--ps1-warning);
+  font-weight: bold;
+  text-shadow: 0 0 10px var(--ps1-secondary);
+}
+
+.ps1-theme .btn-primary {
+  background: linear-gradient(135deg, #00ffff 0%, #0099ff 100%);
+  border: 2px solid var(--ps1-primary);
+  color: #000 !important;
+  font-weight: bold;
+  text-shadow: none;
+  box-shadow: 0 0 15px rgba(0, 255, 255, 0.6), inset -2px -2px 5px rgba(0, 0, 0, 0.3);
+  transform: perspective(800px) rotateY(-5deg);
+  transition: all 0.15s;
+}
+
+.ps1-theme .btn-primary:hover {
+  background: linear-gradient(135deg, #00ff88 0%, #00ff00 100%);
+  border-color: var(--ps1-success);
+  transform: perspective(800px) rotateY(5deg) scale(1.05);
+  box-shadow: 0 0 25px rgba(0, 255, 0, 0.8);
+}
+
+.ps1-theme .btn-primary:active {
+  transform: perspective(800px) rotateY(0deg) scale(0.95);
+  box-shadow: inset 0 0 15px rgba(0, 255, 255, 0.6);
+}
+
+.ps1-theme .btn-success {
+  background: linear-gradient(135deg, #00ff00 0%, #00dd00 100%);
+  border: 2px solid var(--ps1-success);
+  color: #000 !important;
+  box-shadow: 0 0 15px rgba(0, 255, 0, 0.6);
+  font-weight: bold;
+}
+
+.ps1-theme .btn-danger {
+  background: linear-gradient(135deg, #ff0000 0%, #cc0000 100%);
+  border: 2px solid var(--ps1-danger);
+  color: #fff !important;
+  box-shadow: 0 0 15px rgba(255, 0, 0, 0.6);
+  font-weight: bold;
+}
+
+.ps1-theme .form-control,
+.ps1-theme .form-select {
+  background: rgba(26, 26, 46, 0.8);
+  color: var(--ps1-primary);
+  border: 2px solid var(--ps1-primary);
+  box-shadow: inset 0 0 10px rgba(0, 255, 255, 0.2);
+  text-shadow: 0 0 5px rgba(0, 255, 255, 0.4);
+  transition: all 0.2s;
+}
+
+.ps1-theme .form-control:focus,
+.ps1-theme .form-select:focus {
+  background: rgba(26, 26, 46, 0.95);
+  color: var(--ps1-warning);
+  border-color: var(--ps1-secondary);
+  box-shadow: 
+    inset 0 0 15px rgba(0, 255, 255, 0.3),
+    0 0 20px rgba(255, 0, 255, 0.5);
+  text-shadow: 0 0 8px var(--ps1-secondary);
+}
+
+.ps1-theme .table {
+  background: rgba(26, 26, 46, 0.6);
+  border: 2px solid var(--ps1-primary);
+  box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+}
+
+.ps1-theme .table-hover tbody tr:hover {
+  background: rgba(0, 255, 255, 0.15) !important;
+  box-shadow: inset 0 0 20px rgba(0, 255, 255, 0.2);
+  transform: skewX(-2deg);
+}
+
+.ps1-theme .table thead {
+  background: linear-gradient(90deg, rgba(0, 255, 255, 0.2) 0%, rgba(255, 0, 255, 0.2) 100%);
+  border-bottom: 2px solid var(--ps1-secondary);
+  color: var(--ps1-warning);
+  text-shadow: 0 0 10px var(--ps1-secondary);
+}
+
+.ps1-theme .table td,
+.ps1-theme .table th {
+  border-color: var(--ps1-primary);
+  color: var(--ps1-primary);
+}
+
+.ps1-theme .modal-content {
+  background: linear-gradient(135deg, #1a1a3e 0%, #2d1b4e 100%);
+  border: 3px solid var(--ps1-secondary);
+  box-shadow: 0 0 30px rgba(255, 0, 255, 0.5);
+}
+
+.ps1-theme .modal-header {
+  background: linear-gradient(90deg, rgba(0, 255, 255, 0.15) 0%, rgba(255, 0, 255, 0.15) 100%);
+  border-bottom: 2px solid var(--ps1-primary);
+  color: var(--ps1-warning);
+}
+
+.ps1-theme .modal-title {
+  text-shadow: 0 0 10px var(--ps1-secondary);
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+
+.ps1-theme .badge {
+  background: linear-gradient(135deg, var(--ps1-secondary) 0%, var(--ps1-primary) 100%);
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+  text-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+}
+
+.ps1-theme .alert {
+  border: 2px solid;
+  box-shadow: 0 0 15px;
+  font-weight: bold;
+}
+
+.ps1-theme .alert-danger {
+  background: rgba(255, 0, 0, 0.1);
+  border-color: var(--ps1-danger);
+  color: var(--ps1-danger);
+  box-shadow: 0 0 15px rgba(255, 0, 0, 0.5);
+}
+
+.ps1-theme .alert-success {
+  background: rgba(0, 255, 0, 0.1);
+  border-color: var(--ps1-success);
+  color: var(--ps1-success);
+  box-shadow: 0 0 15px rgba(0, 255, 0, 0.5);
+}
+
+.ps1-theme .alert-warning {
+  background: rgba(255, 255, 0, 0.1);
+  border-color: var(--ps1-warning);
+  color: var(--ps1-warning);
+  box-shadow: 0 0 15px rgba(255, 255, 0, 0.5);
+}
+
+.ps1-theme .text-muted {
+  color: rgba(0, 255, 200, 0.6) !important;
+}
+
+.ps1-theme .small {
+  text-shadow: 0 0 3px rgba(0, 255, 255, 0.3);
+}
+
+.ps1-theme .border {
+  border-color: var(--ps1-primary) !important;
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+}
+
+/* Theme Toggle Button */
+.ps1-theme-toggle {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ff00ff 0%, #00ffff 100%);
+  border: 3px solid #00ff00;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  box-shadow: 0 0 20px rgba(255, 0, 255, 0.8);
+  transition: all 0.3s;
+  font-weight: bold;
+  color: #000;
+  user-select: none;
+}
+
+.ps1-theme-toggle:hover {
+  transform: scale(1.15) rotate(15deg);
+  box-shadow: 0 0 30px rgba(0, 255, 0, 1);
+}
+
+.ps1-theme-toggle:active {
+  transform: scale(0.9);
+}
+
+@keyframes ps1-glow {
+  0%, 100% {
+    text-shadow: 0 0 10px var(--ps1-secondary);
+  }
+  50% {
+    text-shadow: 0 0 20px var(--ps1-secondary), 0 0 30px var(--ps1-primary);
+  }
+}
+
+/* Scanlines effect */
+.ps1-theme::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.1),
+    rgba(0, 0, 0, 0.1) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  z-index: 1;
+  opacity: 0.3;
+}
+
+/* Loading spinner PS1 style */
+.ps1-theme .spinner-border {
+  color: var(--ps1-primary) !important;
+  border-width: 4px;
+  box-shadow: 0 0 15px rgba(0, 255, 255, 0.6);
+  animation: spinner-ps1 0.8s linear infinite;
+}
+
+@keyframes spinner-ps1 {
+  0% { transform: rotate(0deg) skewY(2deg); }
+  50% { transform: rotate(180deg) skewY(-2deg); }
+  100% { transform: rotate(360deg) skewY(2deg); }
+}
+
+/* Pills and badges PS1 style */
+.ps1-theme .nav-pills .nav-link {
+  background: linear-gradient(135deg, rgba(0, 255, 255, 0.1) 0%, rgba(255, 0, 255, 0.1) 100%);
+  border: 2px solid var(--ps1-primary);
+  color: var(--ps1-primary);
+  transition: all 0.2s;
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+}
+
+.ps1-theme .nav-pills .nav-link:hover {
+  background: linear-gradient(135deg, rgba(0, 255, 0, 0.2) 0%, rgba(0, 255, 255, 0.2) 100%);
+  border-color: var(--ps1-success);
+  box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
+  transform: scale(1.05);
+}
+
+.ps1-theme .nav-pills .nav-link.active {
+  background: linear-gradient(135deg, var(--ps1-primary) 0%, var(--ps1-success) 100%);
+  border-color: var(--ps1-success);
+  color: #000;
+  box-shadow: 0 0 20px rgba(0, 255, 0, 0.8);
+}
