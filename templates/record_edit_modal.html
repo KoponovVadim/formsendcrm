@@ -38,32 +38,6 @@
         {% endfor %}
         </div>
 
-        {% if module.slug == 'orders' %}
-        <div class="card border-0 shadow-sm mt-3">
-            <div class="card-header fw-semibold">Статусы</div>
-            <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-12 col-md-6">
-                        <label class="form-label fw-medium mb-1">Repair Status</label>
-                        <select class="form-select" name="__repair_status__">
-                            {% for option in repair_status_options %}
-                            <option value="{{ option }}" {% if option == current_repair_status %}selected{% endif %}>{{ option }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-12 col-md-6">
-                        <label class="form-label fw-medium mb-1">Logistics Status</label>
-                        <select class="form-select" name="__logistics_status__">
-                            {% for option in logistics_status_options %}
-                            <option value="{{ option }}" {% if option == current_logistics_status %}selected{% endif %}>{{ option }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
-            </div>
-        </div>
-        {% endif %}
-
         {% if module.slug == 'orders' and order_no %}
         {% include "partials/order_supplies_section.html" %}
         {% endif %}

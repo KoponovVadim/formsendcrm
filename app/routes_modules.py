@@ -60,6 +60,7 @@ ORDER_MAIN_FIELD_CANDIDATES = [
     ["Клиент", "контакт", "фио"],
     ["Устройство", "девайс", "модель"],
     ["Неисправность", "проблем", "полом"],
+    ["Цена для клиента", "Цена", "Сумма", "Стоимость", "price", "total"],
     ["Мастер", "исполнитель", "партнер", "партнёр"],
     ["Статус"],
 ]
@@ -113,9 +114,7 @@ def _is_price_like_field(field_name: str) -> bool:
 
 
 def _filter_module_visible_fields(slug: str, field_names: list[str]) -> list[str]:
-    if slug != "orders":
-        return list(field_names)
-    return [name for name in field_names if not _is_price_like_field(name)]
+    return list(field_names)
 
 
 def _split_order_fields_for_compact_table(field_names: list[str]) -> tuple[list[str], list[str]]:
@@ -228,6 +227,45 @@ def _format_amount(value: float) -> str:
     if float(numeric).is_integer():
         return str(int(numeric))
     return f"{numeric:.2f}"
+
+
+async def _build_order_total_amount_by_record_id(
+    db: AsyncSession,
+    records: list[Any],
+    order_no_field: str | None,
+) -> dict[int, str]:
+    if not records or not order_no_field:
+        return {}
+
+    order_no_by_record_id: dict[int, str] = {}
+    for record in records:
+        record_id = int(getattr(record, "id", 0) or 0)
+        if not record_id:
+            continue
+        data = dict(getattr(record, "data", {}) or {})
+        order_no = _normalize_order_no(str(data.get(order_no_field, "")))
+        if order_no:
+            order_no_by_record_id[record_id] = order_no
+
+    if not order_no_by_record_id:
+        return {}
+
+    order_nos = sorted(set(order_no_by_record_id.values()))
+    rows = (
+        await db.execute(
+            select(CRMOrder.order_no, CRMOrder.total_amount).where(func.upper(CRMOrder.order_no).in_(order_nos))
+        )
+    ).all()
+    amount_by_order_no = {
+        _normalize_order_no(str(order_no or "")): _format_amount(float(total_amount or 0))
+        for order_no, total_amount in rows
+        if str(order_no or "").strip()
+    }
+
+    return {
+        record_id: amount_by_order_no.get(order_no, "")
+        for record_id, order_no in order_no_by_record_id.items()
+    }
 
 
 def _record_matches_search(data: dict[str, Any], search: str) -> bool:
@@ -864,8 +902,15 @@ async def module_list(
 
     order_main_fields: list[str] = []
     order_detail_fields: list[str] = []
+    virtual_order_price_field = ""
+    order_total_amount_by_record_id: dict[int, str] = {}
     if slug == "orders":
         order_main_fields, order_detail_fields = _split_order_fields_for_compact_table(visible_fields)
+        has_explicit_price_in_table = bool(
+            _find_field_name_by_candidates(order_main_fields or visible_fields, ["цена", "стоим", "сумм", "price", "total"])
+        )
+        if not has_explicit_price_in_table:
+            virtual_order_price_field = "Цена"
 
     period_from = _parse_date_value(date_from) if slug == "orders" else None
     period_to = _parse_date_value(date_to) if slug == "orders" else None
@@ -946,6 +991,10 @@ async def module_list(
             stmt = stmt.offset(offset).limit(per_page)
             records = (await db.execute(stmt)).scalars().all()
 
+    if slug == "orders" and virtual_order_price_field:
+        order_no_field = _find_field_name_by_candidates(all_field_names, ["№ заказа", "номер заказа", "номер", "заказ", "order_no"])
+        order_total_amount_by_record_id = await _build_order_total_amount_by_record_id(db, list(records), order_no_field)
+
     total_pages = max(1, (total + per_page - 1) // per_page)
     modules = await get_all_modules(db)
     modules = filter_visible_modules_for_user(modules, user)
@@ -975,6 +1024,8 @@ async def module_list(
         "partner_issued_field": "__partner_issued__",
         "order_main_fields": order_main_fields,
         "order_detail_fields": order_detail_fields,
+        "virtual_order_price_field": virtual_order_price_field,
+        "order_total_amount_by_record_id": order_total_amount_by_record_id,
         "is_module_readonly": is_module_readonly,
         "allow_sync_buttons": allow_sync_buttons,
         "allow_add_button": allow_add_button,
@@ -993,6 +1044,7 @@ async def record_detail(
     request: Request,
     slug: str,
     record_id: int,
+    panel: str = "",
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -1037,7 +1089,9 @@ async def record_detail(
         order_supplies_total = supplies_ctx["order_supplies_total"]
         supplies_fields = supplies_ctx["supplies_fields"]
 
-    return templates.TemplateResponse("record_edit_modal.html", {
+    template_name = "record_edit_drawer.html" if str(panel or "").strip().lower() == "drawer" else "record_edit_modal.html"
+
+    return templates.TemplateResponse(template_name, {
         "request": request,
         "user": user,
         "module": module,

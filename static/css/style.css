@@ -370,6 +370,24 @@
     border: 1px solid #e2e8f0;
 }
 
+.record-edit-modal-body {
+    max-height: calc(100vh - 240px);
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.drawer-edit-form {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.drawer-edit-form .record-edit-modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+}
+
 .record-edit-field {
     border: 1px solid #e2e8f0;
     border-radius: 0.75rem;
@@ -381,6 +399,12 @@
 .record-edit-field .form-select,
 .record-edit-field .form-control-plaintext {
     background: #fff;
+}
+
+@media (max-width: 767.98px) {
+    .record-edit-modal-body {
+        max-height: calc(100vh - 200px);
+    }
 }
 
 /* Smooth transitions */

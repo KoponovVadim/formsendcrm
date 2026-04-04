@@ -1,6 +1,7 @@
 {% set is_orders = module.slug == 'orders' %}
 {% set table_fields = order_main_fields if is_orders and order_main_fields else visible_fields %}
-{% set table_action_columns = 1 + (1 if show_partner_issued_column else 0) %}
+{% set show_virtual_order_price_column = is_orders and virtual_order_price_field %}
+{% set table_action_columns = 1 + (1 if show_partner_issued_column else 0) + (1 if show_virtual_order_price_column else 0) %}
 
 <div class="table-responsive">
     <table class="table table-hover align-middle mb-0 records-table">
@@ -10,6 +11,9 @@
                 {% for field in table_fields %}
                 <th class="text-nowrap">{{ field }}</th>
                 {% endfor %}
+                {% if show_virtual_order_price_column %}
+                <th class="text-nowrap" style="width: 140px">{{ virtual_order_price_field }}</th>
+                {% endif %}
                 {% if show_partner_issued_column %}
                 <th class="text-nowrap" style="width: 130px">Выдан партн.</th>
                 {% endif %}
@@ -89,6 +93,9 @@
                 <td class="record-cell">{{ record.data.get(field, '') | truncate(80) }}</td>
                 {% endif %}
                 {% endfor %}
+                {% if show_virtual_order_price_column %}
+                <td class="record-cell fw-semibold text-nowrap">{{ order_total_amount_by_record_id.get(record.id, '') }}</td>
+                {% endif %}
                 {% if show_partner_issued_column %}
                 <td onclick="event.stopPropagation()">
                     {% set row_status_normalized = row_status|string|lower %}

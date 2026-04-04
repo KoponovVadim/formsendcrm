@@ -13,87 +13,6 @@
     <div class="p-3 record-edit-modal-body">
         <div id="save-result-drawer"></div>
 
-        {% if module.slug == 'orders' %}
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header fw-semibold">Основное</div>
-            <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-12 col-md-6">
-                        <label class="form-label fw-medium mb-1">Точка ремонта</label>
-                        <select class="form-select js-order-assignment-select"
-                                name="__point_id__"
-                                data-slug="{{ module.slug }}"
-                                data-record-id="{{ record.id }}"
-                                data-field="__point_id__">
-                            <option value="">Выберите точку</option>
-                            {% for point in point_options %}
-                            <option value="{{ point.id }}" {% if current_point_id == point.id|string %}selected{% endif %}>{{ point.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-12 col-md-6">
-                        <label class="form-label fw-medium mb-1">Мастер</label>
-                        <select class="form-select js-order-assignment-select js-master-select"
-                                name="__master_id__"
-                                data-slug="{{ module.slug }}"
-                                data-record-id="{{ record.id }}"
-                                data-field="__master_id__">
-                            <option value="">Без мастера</option>
-                            {% for master in master_options %}
-                            <option value="{{ master.id }}"
-                                    data-location-id="{{ master.location_id if master.location_id else '' }}"
-                                    {% if current_master_id == master.id|string %}selected{% endif %}>
-                                {{ master.name }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header fw-semibold">Статусы</div>
-            <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-12 col-md-6">
-                        <label class="form-label fw-medium mb-1">Статус ремонта</label>
-                        <select class="form-select" name="__repair_status__">
-                            {% for option in repair_status_options %}
-                            <option value="{{ option }}" {% if option == current_repair_status %}selected{% endif %}>{{ option }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-12 col-md-6">
-                        <label class="form-label fw-medium mb-1">Статус логистики</label>
-                        <select class="form-select" name="__logistics_status__">
-                            {% for option in logistics_status_options %}
-                            <option value="{{ option }}" {% if option == current_logistics_status %}selected{% endif %}>{{ logistics_status_labels.get(option, option) }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header fw-semibold">Логистика</div>
-            <div class="card-body small text-muted">
-                Текущий логистический статус: <strong>{{ logistics_status_labels.get(current_logistics_status, current_logistics_status) }}</strong>
-            </div>
-        </div>
-
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header fw-semibold">Финансы</div>
-            <div class="card-body small text-muted">Финансовые показатели синхронизируются из модуля «Финансы» по № заказа.</div>
-        </div>
-
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header fw-semibold">История</div>
-            <div class="card-body small text-muted">История изменений будет доступна в следующем итеративном обновлении.</div>
-        </div>
-        {% endif %}
-
         <div class="row g-3 record-edit-grid">
         {% for field in visible_fields %}
         <div class="col-12 col-md-6">
@@ -111,7 +30,9 @@
                     {% endif %}
                 </select>
                 {% else %}
-                <input type="text" class="form-control" name="{{ field }}" value="{{ record.data.get(field, '') }}">
+                {% set input_type = field_input_types.get(field, 'text') %}
+                <input type="{{ input_type }}" class="form-control" name="{{ field }}"
+                       value="{% if input_type == 'date' %}{{ to_date_input_value(record.data.get(field, '')) }}{% else %}{{ record.data.get(field, '') }}{% endif %}">
                 {% endif %}
                 {% else %}
                 <input type="text" class="form-control-plaintext bg-light px-2 rounded" value="{{ record.data.get(field, '') }}" readonly>

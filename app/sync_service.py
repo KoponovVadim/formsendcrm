@@ -2,7 +2,8 @@
 Sync service: bidirectional sync between Google Sheets and local database.
 """
 import logging
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import DynamicRecord, ModuleConfig, SyncLog
@@ -16,6 +17,137 @@ SYNC_DISABLED_MODULES = {"analytics"}
 
 def _is_sync_disabled(module_slug: str) -> bool:
     return str(module_slug or "").strip().lower() in SYNC_DISABLED_MODULES
+
+
+def _normalize_header_key(value: str) -> str:
+    normalized = str(value or "").strip().lower().replace("ё", "е").replace("№", "номер")
+    normalized = re.sub(r"[\s_\-]+", "", normalized)
+    normalized = re.sub(r"[^0-9a-zа-я]", "", normalized)
+    return normalized
+
+
+def _is_date_field(field_schema: dict | None) -> bool:
+    field_type = str((field_schema or {}).get("type", "")).strip().lower()
+    return field_type in {"date", "datetime", "datetime-local", "timestamp"}
+
+
+def _normalize_date_value(value) -> str:
+    if value is None:
+        return ""
+
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+
+    text = str(value).strip()
+    if not text:
+        return ""
+
+    # Google Sheets can return serial date numbers for unformatted cells.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            if float(value) <= 0:
+                return ""
+            origin = datetime(1899, 12, 30)
+            converted = origin + timedelta(days=float(value))
+            return converted.date().isoformat()
+        except Exception:
+            return ""
+
+    if re.match(r"^\d+(\.\d+)?$", text):
+        try:
+            serial = float(text)
+            if serial > 0:
+                origin = datetime(1899, 12, 30)
+                converted = origin + timedelta(days=serial)
+                return converted.date().isoformat()
+        except ValueError:
+            pass
+
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", text):
+        return text
+
+    if "T" in text:
+        iso_candidate = text.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(iso_candidate).date().isoformat()
+        except ValueError:
+            pass
+
+    if " " in text and re.match(r"^\d{4}-\d{2}-\d{2}\s", text):
+        return text.split(" ", 1)[0]
+
+    normalized = text.replace("\\", "/")
+    formats = (
+        "%d.%m.%Y",
+        "%d.%m.%y",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y/%m/%d",
+        "%Y.%m.%d",
+        "%Y-%m-%d %H:%M:%S",
+        "%d.%m.%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M:%S",
+    )
+    for fmt in formats:
+        for candidate in (text, normalized):
+            try:
+                return datetime.strptime(candidate, fmt).date().isoformat()
+            except ValueError:
+                continue
+
+    return ""
+
+
+def _coerce_field_value(value, field_schema: dict | None) -> tuple[str, bool]:
+    if _is_date_field(field_schema):
+        normalized = _normalize_date_value(value)
+        invalid_date = bool(str(value or "").strip()) and not normalized
+        return normalized, invalid_date
+    return (str(value).strip() if value is not None else ""), False
+
+
+def _build_header_mapping(rows: list[dict], expected_headers: list[str]) -> dict[str, str]:
+    source_headers: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for raw_key in row.keys():
+            key = str(raw_key or "")
+            if key and key not in source_headers:
+                source_headers.append(key)
+
+    normalized_source: dict[str, str] = {}
+    for source_header in source_headers:
+        normalized_key = _normalize_header_key(source_header)
+        if normalized_key and normalized_key not in normalized_source:
+            normalized_source[normalized_key] = source_header
+
+    mapping: dict[str, str] = {}
+    for expected in expected_headers:
+        normalized_expected = _normalize_header_key(expected)
+
+        if normalized_expected in normalized_source:
+            mapping[expected] = normalized_source[normalized_expected]
+            continue
+
+        if expected in source_headers:
+            mapping[expected] = expected
+            continue
+
+        candidates: list[tuple[int, int, str]] = []
+        for source_header in source_headers:
+            normalized_source_header = _normalize_header_key(source_header)
+            if not normalized_expected or not normalized_source_header:
+                continue
+            if normalized_expected in normalized_source_header or normalized_source_header in normalized_expected:
+                score = abs(len(normalized_source_header) - len(normalized_expected))
+                candidates.append((score, -len(normalized_source_header), source_header))
+
+        if candidates:
+            candidates.sort()
+            mapping[expected] = candidates[0][2]
+
+    return mapping
 
 
 async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
@@ -33,12 +165,41 @@ async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
 
     try:
         rows = sheets_adapter.get_worksheet_data(module.sheet_name)
-        if not rows:
-            result["message"] = "No data returned from Google Sheets"
-            await _log_sync(db, module.slug, "pull", "success", 0, result["message"])
-            return result
+        rows = [row for row in rows if isinstance(row, dict)]
 
-        headers = [f["name"] for f in module.fields_schema]
+        headers = [
+            str(field.get("name", "")).strip()
+            for field in (module.fields_schema or [])
+            if isinstance(field, dict) and str(field.get("name", "")).strip()
+        ]
+        field_schema_by_name = {
+            str(field.get("name", "")).strip(): field
+            for field in (module.fields_schema or [])
+            if isinstance(field, dict) and str(field.get("name", "")).strip()
+        }
+        header_mapping = _build_header_mapping(rows, headers)
+
+        prepared_rows: list[dict[str, str]] = []
+        skipped_blank_rows = 0
+        invalid_date_cells = 0
+        for row in rows:
+            data: dict[str, str] = {}
+            has_values = False
+            for header in headers:
+                source_header = header_mapping.get(header, header)
+                raw_value = row.get(source_header)
+                normalized_value, is_invalid_date = _coerce_field_value(raw_value, field_schema_by_name.get(header))
+                if is_invalid_date:
+                    invalid_date_cells += 1
+                if normalized_value:
+                    has_values = True
+                data[header] = normalized_value
+
+            if not has_values:
+                skipped_blank_rows += 1
+                continue
+
+            prepared_rows.append(data)
 
         # Delete existing records for this module
         await db.execute(
@@ -46,10 +207,7 @@ async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
         )
 
         # Insert new records
-        for idx, row in enumerate(rows, start=2):
-            data = {}
-            for h in headers:
-                data[h] = str(row.get(h, "")) if row.get(h) is not None else ""
+        for idx, data in enumerate(prepared_rows, start=2):
             record = DynamicRecord(
                 module_slug=module.slug,
                 row_index=idx,
@@ -59,12 +217,20 @@ async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
             db.add(record)
 
         await db.commit()
-        result["records_affected"] = len(rows)
-        result["message"] = f"Pulled {len(rows)} records"
-        await _log_sync(db, module.slug, "pull", "success", len(rows), result["message"])
+        result["records_affected"] = len(prepared_rows)
+
+        message_parts = [f"Pulled {len(prepared_rows)} records"]
+        if skipped_blank_rows:
+            message_parts.append(f"skipped {skipped_blank_rows} blank rows")
+        if invalid_date_cells:
+            message_parts.append(f"normalized with {invalid_date_cells} invalid date values")
+        result["message"] = "; ".join(message_parts)
+
+        await _log_sync(db, module.slug, "pull", "success", len(prepared_rows), result["message"])
 
     except Exception as e:
         logger.exception(f"Pull failed for {module.slug}")
+        await db.rollback()
         result["status"] = "error"
         result["message"] = str(e)
         await _log_sync(db, module.slug, "pull", "error", 0, str(e))
