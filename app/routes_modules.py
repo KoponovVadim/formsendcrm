@@ -60,7 +60,6 @@ ORDER_MAIN_FIELD_CANDIDATES = [
     ["Клиент", "контакт", "фио"],
     ["Устройство", "девайс", "модель"],
     ["Неисправность", "проблем", "полом"],
-    ["Цена для клиента", "Цена", "Сумма", "Стоимость", "price", "total"],
     ["Мастер", "исполнитель", "партнер", "партнёр"],
     ["Статус"],
 ]
@@ -227,6 +226,26 @@ def _format_amount(value: float) -> str:
     if float(numeric).is_integer():
         return str(int(numeric))
     return f"{numeric:.2f}"
+
+
+def _extract_price_from_row_data(data: dict[str, Any]) -> str:
+    if not data:
+        return ""
+
+    for field_name, field_value in data.items():
+        if not _is_price_like_field(field_name):
+            continue
+
+        raw = str(field_value or "").strip()
+        if not raw:
+            continue
+
+        if any(ch.isdigit() for ch in raw):
+            return _format_amount(_parse_float(raw))
+
+        return raw
+
+    return ""
 
 
 async def _build_order_total_amount_by_record_id(
@@ -906,11 +925,7 @@ async def module_list(
     order_total_amount_by_record_id: dict[int, str] = {}
     if slug == "orders":
         order_main_fields, order_detail_fields = _split_order_fields_for_compact_table(visible_fields)
-        has_explicit_price_in_table = bool(
-            _find_field_name_by_candidates(order_main_fields or visible_fields, ["цена", "стоим", "сумм", "price", "total"])
-        )
-        if not has_explicit_price_in_table:
-            virtual_order_price_field = "Цена"
+        virtual_order_price_field = "Цена"
 
     period_from = _parse_date_value(date_from) if slug == "orders" else None
     period_to = _parse_date_value(date_to) if slug == "orders" else None
@@ -994,6 +1009,14 @@ async def module_list(
     if slug == "orders" and virtual_order_price_field:
         order_no_field = _find_field_name_by_candidates(all_field_names, ["№ заказа", "номер заказа", "номер", "заказ", "order_no"])
         order_total_amount_by_record_id = await _build_order_total_amount_by_record_id(db, list(records), order_no_field)
+
+        for record in records:
+            record_id = int(getattr(record, "id", 0) or 0)
+            if not record_id or order_total_amount_by_record_id.get(record_id):
+                continue
+            fallback_price = _extract_price_from_row_data(dict(getattr(record, "data", {}) or {}))
+            if fallback_price:
+                order_total_amount_by_record_id[record_id] = fallback_price
 
     total_pages = max(1, (total + per_page - 1) // per_page)
     modules = await get_all_modules(db)

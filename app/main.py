@@ -24,6 +24,7 @@ from api.chats import router as chats_api_router
 from api.mobile import router as mobile_api_router
 from api.executors import router as executors_api_router
 from realtime.ws_router import router as ws_router
+from models.crm import Order as CRMOrder
 
 # Import normalized models package so Base.metadata includes new tables.
 import models  # noqa: F401
@@ -351,17 +352,9 @@ async def dashboard(
             "updated_at": record.updated_at,
         })
 
-    finance_total_profit = 0.0
-    finance_module = module_by_slug.get("finance")
-    if finance_module:
-        finance_field_names = [f.get("name", "") for f in (finance_module.fields_schema or []) if isinstance(f, dict)]
-        profit_field = _find_field_by_candidates(finance_field_names, ["Чистая прибыль", "прибыль", "profit"])
-        if profit_field:
-            finance_records = (
-                await db.execute(select(DynamicRecord).where(DynamicRecord.module_slug == "finance"))
-            ).scalars().all()
-            for record in finance_records:
-                finance_total_profit += _parse_money((record.data or {}).get(profit_field, 0))
+    orders_total_revenue = float(
+        (await db.execute(select(func.coalesce(func.sum(CRMOrder.total_amount), 0)))).scalar() or 0
+    )
 
     supplies_total_cost = 0.0
     supplies_module = module_by_slug.get("supplies")
@@ -399,7 +392,7 @@ async def dashboard(
         "completed_orders_count": completed_orders_count,
         "ready_orders_count": ready_orders_count,
         "warranty_open_count": warranty_open_count,
-        "finance_total_profit": finance_total_profit,
+        "orders_total_revenue": orders_total_revenue,
         "supplies_total_cost": supplies_total_cost,
         "recent_orders": recent_orders,
         "top_statuses": top_statuses,

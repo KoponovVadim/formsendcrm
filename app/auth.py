@@ -13,6 +13,7 @@ from app.config import settings
 import re
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+HIDDEN_UI_MODULE_SLUGS = {"finance"}
 
 
 def hash_password(password: str) -> str:
@@ -125,10 +126,21 @@ def get_editable_fields(permissions: dict, module_slug: str, all_fields: list, i
 
 def filter_visible_modules_for_user(modules: list, user: User) -> list:
     """Return only modules visible for current user according to role permissions."""
+    filtered_modules = [
+        module
+        for module in modules
+        if str(getattr(module, "slug", "") or "").strip().lower() not in HIDDEN_UI_MODULE_SLUGS
+    ]
+
     if user.is_superuser:
-        return modules
+        return filtered_modules
+
     permissions = get_user_permissions(user)
-    return [m for m in modules if check_module_visible(permissions, m.slug, user.is_superuser)]
+    return [
+        module
+        for module in filtered_modules
+        if check_module_visible(permissions, module.slug, user.is_superuser)
+    ]
 
 
 def get_user_specializations(user: User) -> list[str]:
