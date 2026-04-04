@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+import logging
 import html
 import json
 import re
@@ -26,6 +27,7 @@ from repositories.crm_repository import CRMRepository
 
 router = APIRouter(prefix="/admin")
 templates = Jinja2Templates(directory="templates")
+logger = logging.getLogger(__name__)
 
 DEFAULT_STATUS_OPTIONS = [
     "Новый",
@@ -952,11 +954,20 @@ async def sync_pull(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    _require_admin(user)
-    results = await sync_service.pull_all(db)
-    if request.headers.get("HX-Request"):
-        return HTMLResponse(_sync_results_html(results))
-    return RedirectResponse("/admin/", status_code=302)
+    try:
+        _require_admin(user)
+        results = await sync_service.pull_all(db)
+        if request.headers.get("HX-Request"):
+            return HTMLResponse(_sync_results_html(results))
+        return RedirectResponse("/admin/", status_code=302)
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        logger.exception("Sync pull failed")
+        if request.headers.get("HX-Request"):
+            safe_message = html.escape(str(e))
+            return HTMLResponse(f'<div class="alert alert-danger">{safe_message}</div>')
+        return RedirectResponse("/admin/", status_code=302)
 
 
 @router.post("/sync/push", response_class=HTMLResponse)
@@ -965,11 +976,20 @@ async def sync_push(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    _require_admin(user)
-    results = await sync_service.push_all(db)
-    if request.headers.get("HX-Request"):
-        return HTMLResponse(_sync_results_html(results))
-    return RedirectResponse("/admin/", status_code=302)
+    try:
+        _require_admin(user)
+        results = await sync_service.push_all(db)
+        if request.headers.get("HX-Request"):
+            return HTMLResponse(_sync_results_html(results))
+        return RedirectResponse("/admin/", status_code=302)
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        logger.exception("Sync push failed")
+        if request.headers.get("HX-Request"):
+            safe_message = html.escape(str(e))
+            return HTMLResponse(f'<div class="alert alert-danger">{safe_message}</div>')
+        return RedirectResponse("/admin/", status_code=302)
 
 
 @router.post("/sync/pull/{slug}", response_class=HTMLResponse)
@@ -979,21 +999,30 @@ async def sync_pull_module(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    _require_admin(user)
-    if _is_sync_blocked_module(slug):
+    try:
+        _require_admin(user)
+        if _is_sync_blocked_module(slug):
+            if request.headers.get("HX-Request"):
+                return HTMLResponse('<div class="alert alert-warning">Импорт для аналитики отключен: данные считаются автоматически из заказов.</div>')
+            return RedirectResponse("/admin/", status_code=302)
+        from app.schema_loader import get_module_by_slug
+        module = await get_module_by_slug(db, slug)
+        if not module:
+            raise HTTPException(404)
+        result = await sync_service.pull_module(db, module)
         if request.headers.get("HX-Request"):
-            return HTMLResponse('<div class="alert alert-warning">Импорт для аналитики отключен: данные считаются автоматически из заказов.</div>')
+            alert_class = _sync_alert_class(result.get("status"))
+            safe_message = html.escape(str(result.get("message", "")))
+            return HTMLResponse(f'<div class="alert {alert_class}">{safe_message}</div>')
         return RedirectResponse("/admin/", status_code=302)
-    from app.schema_loader import get_module_by_slug
-    module = await get_module_by_slug(db, slug)
-    if not module:
-        raise HTTPException(404)
-    result = await sync_service.pull_module(db, module)
-    if request.headers.get("HX-Request"):
-        alert_class = _sync_alert_class(result.get("status"))
-        safe_message = html.escape(str(result.get("message", "")))
-        return HTMLResponse(f'<div class="alert {alert_class}">{safe_message}</div>')
-    return RedirectResponse("/admin/", status_code=302)
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        logger.exception("Sync pull module failed for slug=%s", slug)
+        if request.headers.get("HX-Request"):
+            safe_message = html.escape(str(e))
+            return HTMLResponse(f'<div class="alert alert-danger">{safe_message}</div>')
+        return RedirectResponse("/admin/", status_code=302)
 
 
 @router.post("/sync/push/{slug}", response_class=HTMLResponse)
@@ -1003,20 +1032,29 @@ async def sync_push_module(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    _require_admin(user)
-    if _is_sync_blocked_module(slug):
+    try:
+        _require_admin(user)
+        if _is_sync_blocked_module(slug):
+            if request.headers.get("HX-Request"):
+                return HTMLResponse('<div class="alert alert-warning">Экспорт для аналитики отключен: данные считаются автоматически из заказов.</div>')
+            return RedirectResponse("/admin/", status_code=302)
+        from app.schema_loader import get_module_by_slug
+
+        module = await get_module_by_slug(db, slug)
+        if not module:
+            raise HTTPException(404)
+
+        result = await sync_service.push_module(db, module)
         if request.headers.get("HX-Request"):
-            return HTMLResponse('<div class="alert alert-warning">Экспорт для аналитики отключен: данные считаются автоматически из заказов.</div>')
+            alert_class = _sync_alert_class(result.get("status"))
+            safe_message = html.escape(str(result.get("message", "")))
+            return HTMLResponse(f'<div class="alert {alert_class}">{safe_message}</div>')
         return RedirectResponse("/admin/", status_code=302)
-    from app.schema_loader import get_module_by_slug
-
-    module = await get_module_by_slug(db, slug)
-    if not module:
-        raise HTTPException(404)
-
-    result = await sync_service.push_module(db, module)
-    if request.headers.get("HX-Request"):
-        alert_class = _sync_alert_class(result.get("status"))
-        safe_message = html.escape(str(result.get("message", "")))
-        return HTMLResponse(f'<div class="alert {alert_class}">{safe_message}</div>')
-    return RedirectResponse("/admin/", status_code=302)
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        logger.exception("Sync push module failed for slug=%s", slug)
+        if request.headers.get("HX-Request"):
+            safe_message = html.escape(str(e))
+            return HTMLResponse(f'<div class="alert alert-danger">{safe_message}</div>')
+        return RedirectResponse("/admin/", status_code=302)

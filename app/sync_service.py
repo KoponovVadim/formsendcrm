@@ -256,6 +256,7 @@ async def push_module(db: AsyncSession, module: ModuleConfig) -> dict:
         result["message"] = "Sync disabled for this module"
         await _log_sync(db, module.slug, "push", "success", 0, result["message"])
         return result
+
     try:
         stmt = select(DynamicRecord).where(
             DynamicRecord.module_slug == module.slug
@@ -321,12 +322,19 @@ async def push_all(db: AsyncSession):
 
 async def _log_sync(db: AsyncSession, module_slug: str, direction: str,
                      status: str, records: int, message: str):
-    log = SyncLog(
-        module_slug=module_slug,
-        direction=direction,
-        status=status,
-        records_affected=records,
-        message=message,
-    )
-    db.add(log)
-    await db.commit()
+    try:
+        log = SyncLog(
+            module_slug=module_slug,
+            direction=direction,
+            status=status,
+            records_affected=records,
+            message=message,
+        )
+        db.add(log)
+        await db.commit()
+    except Exception:
+        logger.exception("Failed to write sync log")
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception("Failed to rollback after sync log error")
