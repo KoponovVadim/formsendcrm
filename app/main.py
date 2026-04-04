@@ -50,6 +50,10 @@ def _status_key(value: str) -> str:
     return str(value or "").strip().lower()
 
 
+def _normalize_order_no(value: str) -> str:
+    return str(value or "").strip().upper()
+
+
 def _dedupe_order_records(records: list[DynamicRecord], order_no_field: str | None) -> list[DynamicRecord]:
     if not records:
         return []
@@ -352,9 +356,37 @@ async def dashboard(
             "updated_at": record.updated_at,
         })
 
-    orders_total_revenue = float(
-        (await db.execute(select(func.coalesce(func.sum(CRMOrder.total_amount), 0)))).scalar() or 0
+    crm_order_rows = (
+        await db.execute(select(CRMOrder.order_no, CRMOrder.total_amount))
+    ).all()
+    crm_total_by_order: dict[str, float] = {}
+    for crm_order_no, crm_total_amount in crm_order_rows:
+        key = _normalize_order_no(str(crm_order_no or ""))
+        if not key:
+            continue
+        crm_total_by_order[key] = float(crm_total_amount or 0)
+
+    orders_total_revenue = float(sum(crm_total_by_order.values()))
+    order_total_source_field = _find_field_by_candidates(
+        order_field_names,
+        [
+            "Цена в точке",
+            "Цена для клиента",
+            "Сумма заказа",
+            "Стоимость ремонта",
+            "Итого",
+            "Сумма",
+            "Цена",
+        ],
     )
+    if order_total_source_field:
+        for record in dedup_orders_records:
+            row_data = dict(record.data or {})
+            order_no = str(row_data.get(order_no_field or "", "") or "").strip() if order_no_field else ""
+            key = _normalize_order_no(order_no)
+            if key and key in crm_total_by_order:
+                continue
+            orders_total_revenue += _parse_money(row_data.get(order_total_source_field, 0))
 
     supplies_total_cost = 0.0
     supplies_module = module_by_slug.get("supplies")

@@ -84,9 +84,17 @@ def _find_field_name_by_candidates(field_names: list[str], candidates: list[str]
 
 
 def _parse_float(value: str | None) -> float:
-    raw = str(value or "").strip().replace(",", ".")
+    raw = str(value or "").strip().replace(" ", "").replace(",", ".")
+    if not raw:
+        return 0.0
+
+    cleaned = re.sub(r"[^0-9.\-]", "", raw)
+    if cleaned.count(".") > 1:
+        first_dot = cleaned.find(".")
+        cleaned = cleaned[: first_dot + 1] + cleaned[first_dot + 1 :].replace(".", "")
+
     try:
-        return float(raw)
+        return float(cleaned)
     except ValueError:
         return 0.0
 
@@ -459,6 +467,18 @@ async def _build_finance_records_from_orders(db: AsyncSession, module: ModuleCon
     order_no_source_field = _find_field_name_by_candidates(order_fields, ["№ заказа", "номер заказа", "номер", "заказ"])
     order_issued_source_field = _find_field_name_by_candidates(order_fields, ["Дата выдачи", "выдачи"])
     order_accepted_source_field = _find_field_name_by_candidates(order_fields, ["Дата приёма", "дата приема", "дата"])
+    order_total_source_field = _find_field_name_by_candidates(
+        order_fields,
+        [
+            "Цена в точке",
+            "Цена для клиента",
+            "Сумма заказа",
+            "Стоимость ремонта",
+            "Итого",
+            "Сумма",
+            "Цена",
+        ],
+    )
     if not order_no_source_field:
         return []
 
@@ -496,6 +516,8 @@ async def _build_finance_records_from_orders(db: AsyncSession, module: ModuleCon
         legacy_row = finance_legacy_index.get(key, {})
 
         total_amount = float(crm_row.get("total_amount", 0.0) or 0.0)
+        if not total_amount and order_total_source_field:
+            total_amount = _parse_float(str(source_data.get(order_total_source_field, "0")))
         if not total_amount and finance_legacy_meta.get("client_price_field"):
             total_amount = _parse_float(str(legacy_row.get(finance_legacy_meta["client_price_field"], "0")))
 
@@ -566,6 +588,18 @@ async def _build_analytics_records_from_orders(db: AsyncSession, module: ModuleC
     order_no_source_field = _find_field_name_by_candidates(order_fields, ["№ заказа", "номер заказа", "номер", "заказ"])
     order_issued_source_field = _find_field_name_by_candidates(order_fields, ["Дата выдачи", "выдачи"])
     order_accepted_source_field = _find_field_name_by_candidates(order_fields, ["Дата приёма", "дата приема", "дата"])
+    order_total_source_field = _find_field_name_by_candidates(
+        order_fields,
+        [
+            "Цена в точке",
+            "Цена для клиента",
+            "Сумма заказа",
+            "Стоимость ремонта",
+            "Итого",
+            "Сумма",
+            "Цена",
+        ],
+    )
     if not order_no_source_field:
         return []
 
@@ -600,6 +634,8 @@ async def _build_analytics_records_from_orders(db: AsyncSession, module: ModuleC
         legacy_row = finance_legacy_index.get(key, {})
 
         total_amount = float(crm_row.get("total_amount", 0.0) or 0.0)
+        if not total_amount and order_total_source_field:
+            total_amount = _parse_float(str(source_data.get(order_total_source_field, "0")))
         if not total_amount and finance_legacy_meta.get("client_price_field"):
             total_amount = _parse_float(str(legacy_row.get(finance_legacy_meta["client_price_field"], "0")))
 

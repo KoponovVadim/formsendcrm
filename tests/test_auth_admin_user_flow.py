@@ -159,6 +159,77 @@ async def test_analytics_module_hides_sync_and_add_controls(db_session: Any):
 
 
 @pytest.mark.asyncio
+async def test_analytics_module_uses_manual_order_price_when_crm_row_missing(db_session: Any):
+    app = FastAPI()
+    app.include_router(modules_router)
+
+    async def _override_get_db() -> AsyncGenerator[Any, None]:
+        yield db_session
+
+    async def _override_get_current_user():
+        return SimpleNamespace(id=1, is_superuser=True, specialization="", email="admin@test.local", role=None)
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    db_session.add(
+        ModuleConfig(
+            slug="orders",
+            sheet_name="Заказы",
+            display_name="Заказы",
+            icon="bi-clipboard-check",
+            enabled=True,
+            fields_schema=[
+                {"name": "№ заказа", "type": "TEXT"},
+                {"name": "Дата приёма", "type": "DATE"},
+                {"name": "Цена в точке", "type": "TEXT"},
+                {"name": "Статус", "type": "TEXT"},
+            ],
+            sort_order=0,
+        )
+    )
+    db_session.add(
+        ModuleConfig(
+            slug="analytics",
+            sheet_name="Аналитика",
+            display_name="Аналитика",
+            icon="bi-graph-up",
+            enabled=True,
+            fields_schema=[
+                {"name": "Месяц", "type": "TEXT"},
+                {"name": "Выручка", "type": "TEXT"},
+                {"name": "Затраты (запчасти)", "type": "TEXT"},
+                {"name": "Затраты (расходники)", "type": "TEXT"},
+                {"name": "Выплаты (зарплата)", "type": "TEXT"},
+                {"name": "Чистая прибыль", "type": "TEXT"},
+            ],
+            sort_order=1,
+        )
+    )
+    db_session.add(
+        DynamicRecord(
+            module_slug="orders",
+            row_index=2,
+            data={
+                "№ заказа": "ORD-A1",
+                "Дата приёма": "2026-04-04",
+                "Цена в точке": "5 000",
+                "Статус": "Новый",
+            },
+        )
+    )
+    await db_session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get("/modules/analytics")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "2026-04" in html
+    assert "5000" in html
+
+
+@pytest.mark.asyncio
 async def test_orders_module_filters_records_by_period(db_session: Any):
     app = FastAPI()
     app.include_router(modules_router)

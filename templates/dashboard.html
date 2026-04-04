@@ -6,11 +6,13 @@
     {% if user.is_superuser %}
     <div class="btn-group">
         <button class="btn btn-outline-primary btn-sm"
-                hx-post="/admin/sync/pull" hx-target="#sync-result" hx-swap="innerHTML">
+                hx-post="/admin/sync/pull" hx-target="#sync-result" hx-swap="innerHTML"
+                hx-on::after-request="if(event.detail.xhr && event.detail.xhr.status===200){window.location.reload();}">
             <i class="bi bi-cloud-download me-1"></i>Синхр. из Google
         </button>
         <button class="btn btn-outline-success btn-sm"
-                hx-post="/admin/sync/push" hx-target="#sync-result" hx-swap="innerHTML">
+                hx-post="/admin/sync/push" hx-target="#sync-result" hx-swap="innerHTML"
+                hx-on::after-request="if(event.detail.xhr && event.detail.xhr.status===200){window.location.reload();}">
             <i class="bi bi-cloud-upload me-1"></i>Синхр. в Google
         </button>
         <button class="btn btn-outline-secondary btn-sm"
