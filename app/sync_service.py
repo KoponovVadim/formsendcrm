@@ -164,8 +164,14 @@ async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
         return result
 
     try:
-        rows = sheets_adapter.get_worksheet_data(module.sheet_name)
-        rows = [row for row in rows if isinstance(row, dict)]
+        logger.info(f"Starting pull for module '{module.slug}' from sheet '{module.sheet_name}'")
+        source_rows = sheets_adapter.get_worksheet_data(module.sheet_name)
+        if not source_rows:
+            logger.info(f"No rows in worksheet '{module.sheet_name}' for module '{module.slug}'; local records will be cleared")
+
+        rows = [row for row in source_rows if isinstance(row, dict)]
+        if source_rows and not rows:
+            logger.warning(f"Worksheet '{module.sheet_name}' returned non-dict rows only; treating as empty dataset")
 
         headers = [
             str(field.get("name", "")).strip()
@@ -178,6 +184,8 @@ async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
             if isinstance(field, dict) and str(field.get("name", "")).strip()
         }
         header_mapping = _build_header_mapping(rows, headers)
+        logger.debug(f"Headers for {module.slug}: {headers}")
+        logger.debug(f"Header mapping: {header_mapping}")
 
         prepared_rows: list[dict[str, str]] = []
         skipped_blank_rows = 0
@@ -200,6 +208,8 @@ async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
                 continue
 
             prepared_rows.append(data)
+
+        logger.info(f"Prepared {len(prepared_rows)} rows from {len(rows)} total rows (skipped {skipped_blank_rows} blank rows)")
 
         # Delete existing records for this module
         await db.execute(
@@ -225,14 +235,15 @@ async def pull_module(db: AsyncSession, module: ModuleConfig) -> dict:
         if invalid_date_cells:
             message_parts.append(f"normalized with {invalid_date_cells} invalid date values")
         result["message"] = "; ".join(message_parts)
+        logger.info(f"Pull completed for {module.slug}: {result['message']}")
 
         await _log_sync(db, module.slug, "pull", "success", len(prepared_rows), result["message"])
 
     except Exception as e:
-        logger.exception(f"Pull failed for {module.slug}")
+        logger.exception(f"Pull failed for {module.slug}: {type(e).__name__}: {str(e)}")
         await db.rollback()
         result["status"] = "error"
-        result["message"] = str(e)
+        result["message"] = f"Pull failed: {str(e)}"
         await _log_sync(db, module.slug, "pull", "error", 0, str(e))
 
     return result

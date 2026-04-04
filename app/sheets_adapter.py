@@ -44,38 +44,59 @@ def _get_client():
         return _client
 
     if not GSPREAD_AVAILABLE:
-        logger.warning("gspread not installed, Google Sheets sync disabled")
+        logger.error("gspread not installed, Google Sheets sync disabled")
         return None
 
     creds_env = os.getenv("GOOGLE_CREDENTIALS_JSON", "")
     if not creds_env:
-        logger.warning("GOOGLE_CREDENTIALS_JSON not set, Google Sheets sync disabled")
+        logger.error("GOOGLE_CREDENTIALS_JSON not set, Google Sheets sync disabled")
         return None
 
-    # Try as file path first, then as raw JSON
-    if os.path.isfile(creds_env):
-        credentials = Credentials.from_service_account_file(creds_env, scopes=SCOPES)
-    else:
-        try:
+    try:
+        # Try as file path first, then as raw JSON
+        if os.path.isfile(creds_env):
+            logger.debug(f"Loading credentials from file: {creds_env}")
+            credentials = Credentials.from_service_account_file(creds_env, scopes=SCOPES)
+        else:
+            logger.debug("Loading credentials from JSON string")
             info = json.loads(creds_env)
             credentials = Credentials.from_service_account_info(info, scopes=SCOPES)
-        except json.JSONDecodeError:
-            logger.error("GOOGLE_CREDENTIALS_JSON is neither a valid file path nor valid JSON")
-            return None
 
-    _client = gspread.authorize(credentials)
-    return _client
+        _client = gspread.authorize(credentials)
+        logger.info("Successfully authorized Google Sheets client")
+        return _client
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"GOOGLE_CREDENTIALS_JSON is invalid JSON: {str(e)}")
+        return None
+    except FileNotFoundError as e:
+        logger.error(f"GOOGLE_CREDENTIALS_JSON file not found: {creds_env}")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to authorize Google Sheets client: {type(e).__name__}: {str(e)}", exc_info=True)
+        return None
 
 
 def _get_spreadsheet():
-    client = _get_client()
-    if client is None:
+    try:
+        client = _get_client()
+        if client is None:
+            logger.error("Cannot get spreadsheet: client is None")
+            return None
+        
+        spreadsheet_id = os.getenv("SPREADSHEET_ID", "")
+        if not spreadsheet_id:
+            logger.error("SPREADSHEET_ID not set")
+            return None
+        
+        logger.debug(f"Opening spreadsheet with ID: {spreadsheet_id}")
+        ss = client.open_by_key(spreadsheet_id)
+        logger.debug(f"Successfully opened spreadsheet: {ss.title}")
+        return ss
+        
+    except Exception as e:
+        logger.error(f"Failed to get spreadsheet: {type(e).__name__}: {str(e)}", exc_info=True)
         return None
-    spreadsheet_id = os.getenv("SPREADSHEET_ID", "")
-    if not spreadsheet_id:
-        logger.warning("SPREADSHEET_ID not set")
-        return None
-    return client.open_by_key(spreadsheet_id)
 
 
 def _retry(func, retries=3, delay=2):
@@ -113,9 +134,22 @@ def get_worksheet_data(sheet_name: str) -> list[dict]:
     """Fetch all rows from a worksheet as list of dicts."""
     ss = _get_spreadsheet()
     if ss is None:
-        return []
-    ws = _retry(lambda: ss.worksheet(sheet_name))
-    records = _retry(lambda: ws.get_all_records())
+        raise RuntimeError("Google Sheets connection is not configured")
+
+    try:
+        ws = _retry(lambda: ss.worksheet(sheet_name))
+        records = _retry(lambda: ws.get_all_records())
+    except Exception as e:
+        logger.error(
+            f"Error fetching worksheet data for '{sheet_name}': {type(e).__name__}: {str(e)}",
+            exc_info=True,
+        )
+        raise
+
+    if not isinstance(records, list):
+        raise RuntimeError(f"Unexpected worksheet payload type: {type(records)}")
+
+    logger.info(f"Successfully pulled {len(records)} records from worksheet '{sheet_name}'")
     return records
 
 

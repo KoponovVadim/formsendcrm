@@ -1,46 +1,45 @@
 /* Comic Style Theme - Simple & Clean */
 :root.comic-theme {
-  --comic-primary: #FF6B35;
-  --comic-secondary: #004E89;
-  --comic-accent: #F77F00;
-  --comic-success: #06A77D;
-  --comic-danger: #D62828;
-  --comic-warning: #FCBF49;
-  --comic-light: #F4F1DE;
-  --comic-dark: #1B263B;
+  --comic-primary: #d95a2b;
+  --comic-secondary: #1e4f87;
+  --comic-accent: #c98a1c;
+  --comic-success: #1f8f70;
+  --comic-danger: #c0392b;
+  --comic-warning: #d8a321;
+  --comic-light: #f5f6f8;
+  --comic-dark: #1f2a37;
 }
 
 body.comic-theme {
-  background: #F4F1DE;
-  color: #1B263B;
-  font-family: 'Comic Sans MS', 'Chalkboard SE', 'Bradley Hand', cursive, sans-serif;
+  background: #f5f6f8;
+  color: #1f2a37;
+  font-family: 'Manrope', 'Segoe UI', Tahoma, sans-serif;
 }
 
 /* Navbar */
 .comic-theme .navbar {
-  background: linear-gradient(90deg, #FF6B35 0%, #F77F00 100%) !important;
-  border-bottom: 4px solid #004E89;
-  box-shadow: -4px 4px 0px rgba(0, 0, 0, 0.2);
+  background: linear-gradient(90deg, #d95a2b 0%, #c98a1c 100%) !important;
+  border-bottom: 2px solid #1e4f87;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.16);
 }
 
 .comic-theme .navbar-brand {
   color: #fff !important;
-  font-weight: 900 !important;
-  font-size: 1.6rem;
-  letter-spacing: 1px;
-  text-shadow: 2px 2px 0px rgba(0, 0, 0, 0.3);
+  font-weight: 800 !important;
+  font-size: 1.35rem;
+  letter-spacing: 0.4px;
+  text-shadow: none;
 }
 
 .comic-theme .nav-link {
   color: #fff !important;
-  font-weight: 700;
+  font-weight: 600;
   transition: all 0.15s;
-  text-shadow: 1px 1px 0px rgba(0, 0, 0, 0.2);
+  text-shadow: none;
 }
 
 .comic-theme .nav-link:hover {
   background: rgba(0, 0, 0, 0.15);
-  transform: translateY(-2px);
 }
 
 .comic-theme .nav-link.active {
@@ -51,9 +50,9 @@ body.comic-theme {
 
 /* Sidebar */
 .comic-theme .sidebar {
-  background: linear-gradient(180deg, #004E89 0%, #0A6FA5 100%) !important;
-  border-right: 4px solid #FF6B35;
-  box-shadow: 3px 0 10px rgba(0, 0, 0, 0.2);
+  background: linear-gradient(180deg, #1e4f87 0%, #2a659f 100%) !important;
+  border-right: 2px solid #d95a2b;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.16);
 }
 
 .comic-theme .sidebar .nav-link {
@@ -65,9 +64,8 @@ body.comic-theme {
 }
 
 .comic-theme .sidebar .nav-link:hover {
-  background: rgba(255, 107, 53, 0.2);
-  border-left-color: #FF6B35;
-  transform: translateX(4px);
+  background: rgba(217, 90, 43, 0.2);
+  border-left-color: #d95a2b;
 }
 
 .comic-theme .sidebar .nav-link.active {
@@ -79,78 +77,73 @@ body.comic-theme {
 /* Cards */
 .comic-theme .card {
   background: #fff;
-  border: 3px solid #004E89;
-  box-shadow: -4px 4px 0px rgba(0, 0, 0, 0.15);
+  border: 2px solid #1e4f87;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
   transition: all 0.2s;
 }
 
 .comic-theme .card:hover {
-  box-shadow: -6px 6px 0px rgba(0, 0, 0, 0.2);
-  transform: translateX(-2px) translateY(-2px);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.16);
 }
 
 .comic-theme .card-header {
-  background: linear-gradient(90deg, #004E89 0%, #0A6FA5 100%);
-  border-bottom: 3px solid #FF6B35;
+  background: linear-gradient(90deg, #1e4f87 0%, #2a659f 100%);
+  border-bottom: 2px solid #d95a2b;
   color: #fff;
   font-weight: 700;
 }
 
 /* Buttons */
 .comic-theme .btn-primary {
-  background: #FF6B35;
-  border: 3px solid #004E89;
+  background: #d95a2b;
+  border: 2px solid #1e4f87;
   color: #fff !important;
-  font-weight: 700;
-  box-shadow: -3px 3px 0px rgba(0, 0, 0, 0.2);
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
   transition: all 0.15s;
 }
 
 .comic-theme .btn-primary:hover {
-  background: #F77F00;
-  transform: translateX(-1px) translateY(-1px);
-  box-shadow: -4px 4px 0px rgba(0, 0, 0, 0.25);
+  background: #c98a1c;
+  box-shadow: 0 4px 9px rgba(0, 0, 0, 0.22);
 }
 
 .comic-theme .btn-primary:active {
-  transform: translate(1px, 1px);
-  box-shadow: -2px 2px 0px rgba(0, 0, 0, 0.15);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.24);
 }
 
 .comic-theme .btn-success {
-  background: #06A77D;
-  border: 3px solid #05334d;
+  background: #1f8f70;
+  border: 2px solid #0f5a45;
   color: #fff !important;
-  font-weight: 700;
-  box-shadow: -3px 3px 0px rgba(0, 0, 0, 0.2);
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 }
 
 .comic-theme .btn-success:hover {
-  background: #059e7d;
-  transform: translateX(-1px) translateY(-1px);
-  box-shadow: -4px 4px 0px rgba(0, 0, 0, 0.25);
+  background: #197e63;
+  box-shadow: 0 4px 9px rgba(0, 0, 0, 0.22);
 }
 
 .comic-theme .btn-danger {
-  background: #D62828;
-  border: 3px solid #8a1111;
+  background: #c0392b;
+  border: 2px solid #8f2a20;
   color: #fff !important;
-  font-weight: 700;
-  box-shadow: -3px 3px 0px rgba(0, 0, 0, 0.2);
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 }
 
 .comic-theme .btn-danger:hover {
-  background: #E63946;
-  transform: translateX(-1px) translateY(-1px);
-  box-shadow: -4px 4px 0px rgba(0, 0, 0, 0.25);
+  background: #aa3125;
+  box-shadow: 0 4px 9px rgba(0, 0, 0, 0.22);
 }
 
 /* Forms */
 .comic-theme .form-control,
 .comic-theme .form-select {
   background: #fff;
-  color: #1B263B;
-  border: 3px solid #004E89 !important;
+  color: #1f2a37;
+  border: 2px solid #1e4f87 !important;
   font-weight: 500;
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
   transition: all 0.2s;
@@ -158,10 +151,10 @@ body.comic-theme {
 
 .comic-theme .form-control:focus,
 .comic-theme .form-select:focus {
-  background: #FFF9E6;
-  border-color: #FF6B35 !important;
-  box-shadow: 0 0 0 4px rgba(255, 107, 53, 0.2);
-  color: #1B263B;
+  background: #fffdf7;
+  border-color: #d95a2b !important;
+  box-shadow: 0 0 0 3px rgba(217, 90, 43, 0.18);
+  color: #1f2a37;
 }
 
 .comic-theme .form-label {
@@ -172,8 +165,8 @@ body.comic-theme {
 /* Tables */
 .comic-theme .table {
   background: #fff;
-  border: 3px solid #004E89;
-  box-shadow: -2px 2px 0px rgba(0, 0, 0, 0.1);
+  border: 2px solid #1e4f87;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .comic-theme .table-hover tbody tr:hover {
@@ -182,8 +175,8 @@ body.comic-theme {
 }
 
 .comic-theme .table thead {
-  background: linear-gradient(90deg, #004E89 0%, #0A6FA5 100%);
-  border-bottom: 3px solid #FF6B35;
+  background: linear-gradient(90deg, #1e4f87 0%, #2a659f 100%);
+  border-bottom: 2px solid #d95a2b;
   color: #fff;
   font-weight: 700;
 }
@@ -201,9 +194,9 @@ body.comic-theme {
 
 /* Modals */
 .comic-theme .modal-content {
-  background: #F4F1DE;
-  border: 4px solid #004E89;
-  box-shadow: -6px 6px 0px rgba(0, 0, 0, 0.25);
+  background: #f5f6f8;
+  border: 2px solid #1e4f87;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
 }
 
 .comic-theme .modal-header {
@@ -292,15 +285,15 @@ body.comic-theme {
   right: 20px;
   z-index: 9999;
   background: #fff;
-  padding: 12px 16px;
-  border-radius: 30px;
-  border: 3px solid #004E89;
-  box-shadow: -4px 4px 0px rgba(0, 0, 0, 0.2);
+  padding: 10px 14px;
+  border-radius: 22px;
+  border: 2px solid #1e4f87;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.16);
   display: flex;
   align-items: center;
   gap: 10px;
-  font-weight: 700;
-  color: #1B263B;
+  font-weight: 600;
+  color: #1f2a37;
 }
 
 .comic-toggle-switch {

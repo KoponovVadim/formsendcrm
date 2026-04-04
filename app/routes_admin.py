@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+import html
 import json
 import re
 
@@ -929,6 +930,22 @@ async def module_status_settings_update(
 
 
 # ─── SYNC ────────────────────────────────────────────────
+def _sync_alert_class(status: str | None) -> str:
+    return "alert-danger" if str(status or "").strip().lower() == "error" else "alert-info"
+
+
+def _sync_results_html(results: dict[str, dict]) -> str:
+    has_error = any(str((item or {}).get("status", "")).strip().lower() == "error" for item in results.values())
+    alert_class = "alert-danger" if has_error else "alert-info"
+    parts = [f'<div class="alert {alert_class}">']
+    for slug, item in results.items():
+        safe_slug = html.escape(str(slug or ""))
+        safe_message = html.escape(str((item or {}).get("message", "")))
+        parts.append(f"<div>{safe_slug}: {safe_message}</div>")
+    parts.append("</div>")
+    return "".join(parts)
+
+
 @router.post("/sync/pull", response_class=HTMLResponse)
 async def sync_pull(
     request: Request,
@@ -938,11 +955,7 @@ async def sync_pull(
     _require_admin(user)
     results = await sync_service.pull_all(db)
     if request.headers.get("HX-Request"):
-        html = '<div class="alert alert-info">'
-        for slug, r in results.items():
-            html += f'<div>{slug}: {r["message"]}</div>'
-        html += '</div>'
-        return HTMLResponse(html)
+        return HTMLResponse(_sync_results_html(results))
     return RedirectResponse("/admin/", status_code=302)
 
 
@@ -955,11 +968,7 @@ async def sync_push(
     _require_admin(user)
     results = await sync_service.push_all(db)
     if request.headers.get("HX-Request"):
-        html = '<div class="alert alert-info">'
-        for slug, r in results.items():
-            html += f'<div>{slug}: {r["message"]}</div>'
-        html += '</div>'
-        return HTMLResponse(html)
+        return HTMLResponse(_sync_results_html(results))
     return RedirectResponse("/admin/", status_code=302)
 
 
@@ -981,7 +990,9 @@ async def sync_pull_module(
         raise HTTPException(404)
     result = await sync_service.pull_module(db, module)
     if request.headers.get("HX-Request"):
-        return HTMLResponse(f'<div class="alert alert-info">{result["message"]}</div>')
+        alert_class = _sync_alert_class(result.get("status"))
+        safe_message = html.escape(str(result.get("message", "")))
+        return HTMLResponse(f'<div class="alert {alert_class}">{safe_message}</div>')
     return RedirectResponse("/admin/", status_code=302)
 
 
@@ -1005,5 +1016,7 @@ async def sync_push_module(
 
     result = await sync_service.push_module(db, module)
     if request.headers.get("HX-Request"):
-        return HTMLResponse(f'<div class="alert alert-info">{result["message"]}</div>')
+        alert_class = _sync_alert_class(result.get("status"))
+        safe_message = html.escape(str(result.get("message", "")))
+        return HTMLResponse(f'<div class="alert {alert_class}">{safe_message}</div>')
     return RedirectResponse("/admin/", status_code=302)
