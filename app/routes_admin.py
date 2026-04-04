@@ -21,7 +21,7 @@ from app.auth import (
     get_user_specializations,
 )
 from app.schema_loader import get_all_modules
-from app import sync_service
+from app import sync_service, sheets_adapter
 from models.crm import Executor, Location, LocationPrice, Order, Service, Task
 from repositories.crm_repository import CRMRepository
 
@@ -946,6 +946,32 @@ def _sync_results_html(results: dict[str, dict]) -> str:
         parts.append(f"<div>{safe_slug}: {safe_message}</div>")
     parts.append("</div>")
     return "".join(parts)
+
+
+@router.post("/sync/check", response_class=HTMLResponse)
+async def sync_check(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    try:
+        _require_admin(user)
+        sheet_names = sheets_adapter.get_all_sheet_names()
+        if sheet_names:
+            safe_names = ", ".join(html.escape(str(name)) for name in sheet_names[:10])
+            suffix = "" if len(sheet_names) <= 10 else ", ..."
+            return HTMLResponse(
+                f'<div class="alert alert-success">Google Sheets connection OK. Sheets: {safe_names}{suffix}</div>'
+            )
+        return HTMLResponse(
+            '<div class="alert alert-warning">Google Sheets is unavailable or has no accessible worksheets. Check credentials and spreadsheet access.</div>'
+        )
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        logger.exception("Sync check failed")
+        safe_message = html.escape(str(e))
+        return HTMLResponse(f'<div class="alert alert-danger">{safe_message}</div>')
 
 
 @router.post("/sync/pull", response_class=HTMLResponse)
