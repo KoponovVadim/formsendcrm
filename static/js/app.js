@@ -1,5 +1,35 @@
 /* ── CRM App JavaScript ── */
 
+// ===== Live Update & UI Feedback System =====
+function showSaveToast(message, type = 'success') {
+    const toastHTML = `
+        <div class="toast align-items-center border-0" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="d-flex" style="background: ${type === 'success' ? '#06A77D' : '#D62828'}; color: white; padding: 12px 16px; border-radius: 4px; font-weight: 600; box-shadow: -2px 2px 0px rgba(0,0,0,0.15);">
+                <div class="me-2">
+                    <i class="bi ${type === 'success' ? 'bi-check-circle' : 'bi-exclamation-triangle'}"></i>
+                </div>
+                <div>${message}</div>
+                <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="toast" style="filter: brightness(1.2);"></button>
+            </div>
+        </div>
+    `;
+    const container = document.getElementById('toast-container') || (() => {
+        const c = document.createElement('div');
+        c.id = 'toast-container';
+        c.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9998;';
+        document.body.appendChild(c);
+        return c;
+    })();
+    
+    const toast = new DOMParser().parseFromString(toastHTML, 'text/html').body.firstChild;
+    container.appendChild(toast);
+    const bsToast = new bootstrap.Toast(toast);
+    bsToast.show();
+    setTimeout(() => toast.remove(), 4000);
+}
+
+// ===== Original App Code Continues =====
+
 document.addEventListener('DOMContentLoaded', function () {
     // -- Sidebar toggle (mobile) --
     const sidebarToggle = document.getElementById('sidebarToggle');
@@ -579,10 +609,11 @@ document.addEventListener('DOMContentLoaded', function () {
             selectEl.dataset.previousValue = value;
             applyRowStatusColor(selectEl, payload.row_bg || rowBg);
             refreshRecordsContainer(slug);
+            showSaveToast('Статус обновлён ✓', 'success');
         } catch (err) {
             selectEl.value = previousValue;
             applyRowStatusColor(selectEl, toRgba(getSelectedOptionColor(selectEl), 0.28));
-            alert('Не удалось сохранить статус. Обновите страницу и попробуйте снова.');
+            showSaveToast('Ошибка сохранения', 'error');
         }
     }
 
@@ -591,18 +622,25 @@ document.addEventListener('DOMContentLoaded', function () {
         formData.append('field', field);
         formData.append('value', value == null ? '' : String(value));
 
-        const response = await fetch(`/modules/${slug}/record/${recordId}/field`, {
-            method: 'POST',
-            body: formData,
-            headers: { 'HX-Request': 'true' }
-        });
+        try {
+            const response = await fetch(`/modules/${slug}/record/${recordId}/field`, {
+                method: 'POST',
+                body: formData,
+                headers: { 'HX-Request': 'true' }
+            });
 
-        if (!response.ok) {
-            const text = await response.text().catch(function () { return ''; });
-            throw new Error(text || 'inline_field_save_failed');
+            if (!response.ok) {
+                const text = await response.text().catch(function () { return ''; });
+                throw new Error(text || 'inline_field_save_failed');
+            }
+
+            refreshRecordsContainer(slug);
+            showSaveToast('Изменения сохранены ✓', 'success');
+            return response.json().catch(function () { return { ok: true }; });
+        } catch (err) {
+            showSaveToast('Ошибка при сохранении', 'error');
+            throw err;
         }
-
-        return response.json().catch(function () { return { ok: true }; });
     }
 
     function initOrderAssignmentControls(root) {
